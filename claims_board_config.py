@@ -107,44 +107,65 @@ ORDER_BOARD_COLUMN_MAP = {
 
 
 # ============================================================
-# NEW ORDER BOARD — COLUMN MAPPINGS
+# NEW ORDER BOARD (18405457690) — COLUMN MAPPINGS
 # ============================================================
 # The New Order Board is FLAT (no subitems).
-# Product quantities and types are parent-level columns.
-
+# Product quantities and types are all parent-level columns.
+# Primary Insurance uses COMBINED labels (e.g. "Anthem BCBS Commercial")
+# matching the original repo's payer naming convention.
+#
 # VERIFIED against live Monday board (2026-03-31)
-# New Order Board (18403054769) was duplicated from Order Board — shares column IDs.
-# It has subitems (same structure as Order Board), NOT flat.
+
 NEW_ORDER_BOARD_COLUMN_MAP = {
     # Patient info
-    "status":               "claim_status",
-    "color_mm1svmyk":       "gender",              # Status type (Male/Female)
+    "color_mm1svmyk":       "gender",               # Status: Male, Female
     "text_mm187t6a":        "dob",
     "phone_mm18rr9v":       "phone",
-    "location_mm187v29":    "patient_address",
-    "color_mm189t0b":       "diagnosis_code",       # Status type
-    "color_mm18ds28":       "cgm_coverage",         # Status type (Hypo/Insulin)
+    "location_mm187v29":    "patient_address",       # Location type
+    "pulse_id_mm18spqf":    "customer_id",           # Item ID column
 
     # Doctor info
     "text_mm18w2y4":        "doctor_name",
     "text_mm18x1kj":        "doctor_npi",
-    "location_mm18qfed":    "doctor_address",
+    "location_mm18qfed":    "doctor_address",        # Location type
     "phone_mm18t5ct":       "doctor_phone",
 
-    # Insurance
-    "color_mm18jhq5":       "primary_insurance",    # Status type
+    # Insurance — Primary Insurance is ALREADY combined (e.g. "Anthem BCBS Commercial")
+    "color_mm18jhq5":       "primary_insurance",     # Status: Anthem BCBS Commercial, United Commercial, etc.
     "text_mm18s3fe":        "member_id",
-    "color_mm18h6yn":       "pr_payor",
+    "color_mm18h6yn":       "secondary_insurance",   # Status: NY Medicaid, Patient, Medicare Supplement
     "text_mm18c6z4":        "secondary_id",
-    "color_mm18h05q":       "subscription_type",    # Status type
-
-    # 277 / Claim tracking
-    "color_mm1bx9az":       "status_277",
-    "text_mm1b56xa":        "rejection_reason_277",
-    "text_mm1ra2v1":        "claim_id",
 
     # Order metadata
-    "date_mm1ssf5g":        "dos",                  # Date of Service
+    "status":               "order_status",          # Status: Order, Ordered, Stuck + Process Claim, Claim Sent to Review
+    "date_mm1ssf5g":        "dos",                   # Order Date / Date of Service
+    "color_mm18h05q":       "subscription_type",     # Status: CGM, Insulin Pump & CGM, Supplies, etc.
+    "color_mm1s96z2":       "order_type",            # Status: First Order, Reorder
+    "color_mm1s8tz0":       "frequency",             # Status: 60-Days, 90-Days
+    "color_mm189t0b":       "diagnosis_code",        # Status: E11.65, E10.65
+    "color_mm18ds28":       "cgm_coverage",          # Status: Hypo, Insulin
+    "text_mm1snsw3":        "auth_id",
+    "color_mm1seak5":       "referral",              # Status: Working on it, Done, Stuck
+
+    # Product — Insulin Pump
+    "color_mm1stny0":       "pump_brand",            # Status: Tandem, Beta Bionics
+    "color_mm1s45wm":       "pump_type",             # Status: Mobi, iLet, t:slim
+    "numeric_mm1smjyx":     "pump_qty",
+
+    # Product — Infusion Sets
+    "color_mm1saxyg":       "infusion_set_1_type",   # Status: AutoSoft XC 9mm 23"
+    "numeric_mm1shc1v":     "infusion_1_qty",
+    "color_mm1sp64":        "infusion_set_2_type",   # Status
+    "numeric_mm1svn8d":     "infusion_2_qty",
+
+    # Product — Cartridge
+    "color_mm1szdck":       "cartridge_type",        # Status: Mobi, iLet, t:slim
+    "numeric_mm1s9qxd":     "cartridge_qty",
+
+    # Product — CGM
+    "color_mm1sjy4y":       "cgm_type",              # Status: FreeStyle Libre 3 Plus, Dexcom G7
+    "numeric_mm1s49bj":     "cgm_sensor_qty",
+    "numeric_mm1s431c":     "cgm_monitor_qty",
 }
 
 

@@ -158,9 +158,13 @@ async def monday_process_order_webhook(request: Request, background_tasks: Backg
 
 async def handle_process_order_event(body: dict):
     """
-    Handle an Order Board → Claims Board creation event.
-    Reads Order Board item, computes claim fields, creates Claims Board
-    parent + subitems for human review.
+    Handle a New Order Board → Claims Board creation event.
+    Reads New Order Board (18405457690) item, computes claim fields,
+    creates Claims Board parent + subitems for human review.
+
+    The New Order Board uses COMBINED insurance labels (e.g. "Anthem BCBS Commercial")
+    matching the original repo's payer naming convention. No need to combine
+    separate payer + type fields.
     """
     event = body.get("event", {})
     item_id = str(event.get("pulseId") or event.get("itemId") or "")
@@ -171,8 +175,8 @@ async def handle_process_order_event(body: dict):
         logger.warning("[ProcessOrder] No item ID in event — ignoring")
         return
 
-    # Only process Order Status (color_mkwtxw9r) changes
-    if column_id and column_id != "color_mkwtxw9r":
+    # Only process Order Status ("status" column on New Order Board) changes
+    if column_id and column_id != "status":
         logger.info(f"[ProcessOrder] Ignoring column {column_id} change (not Order Status)")
         return
 
@@ -180,26 +184,19 @@ async def handle_process_order_event(body: dict):
     raw_value = event.get("value", {})
     logger.info(f"[ProcessOrder] Raw event value: {raw_value}")
 
-    # Check if status changed to "Process Claim" (index 4)
-    # Monday sends value in various formats — check broadly
+    # Check if status changed to "Process Claim"
     value_str = str(raw_value)
-    is_process_claim = (
-        "Process Claim" in value_str
-        or '"index":4' in value_str.replace(" ", "")
-        or '"index": 4' in value_str
-    )
+    is_process_claim = "Process Claim" in value_str
     if not is_process_claim:
         logger.info(f"[ProcessOrder] Status changed but not to 'Process Claim' — ignoring")
         return
 
-    logger.info(f"[ProcessOrder] Triggered for Order Board item {item_id} (Process Claim)")
+    logger.info(f"[ProcessOrder] Triggered for New Order Board item {item_id} (Process Claim)")
 
     try:
         from services.monday_service import run_query
         from claims_board_config import (
-            ORDER_BOARD_COLUMN_MAP,
-            CLAIMS_BOARD_PARENT_WRITE_MAP,
-            resolve_subitem_insurance_label,
+            NEW_ORDER_BOARD_COLUMN_MAP,
             PRODUCT_CATEGORIES,
         )
         from claim_infrastructure import (
@@ -209,9 +206,10 @@ async def handle_process_order_event(body: dict):
         )
         from routes.order_to_claims import compute_all_product_subitems
         from claim_infrastructure import build_normalized_order_template
+        import json as _json
 
-        # ── Step 1: Fetch Order Board item ──
-        logger.info(f"[ProcessOrder] Step 1: Fetching Order Board item {item_id}")
+        # ── Step 1: Fetch New Order Board item ──
+        logger.info(f"[ProcessOrder] Step 1: Fetching New Order Board item {item_id}")
         fetch_query = """
         query GetOrderItem($itemId: ID!) {
           items(ids: [$itemId]) {
@@ -223,20 +221,20 @@ async def handle_process_order_event(body: dict):
         """
         result = retry_operation(
             lambda: run_query(fetch_query, {"itemId": item_id}),
-            f"Fetch Order Board item {item_id}",
+            f"Fetch New Order Board item {item_id}",
         )
         order_item = result.get("data", {}).get("items", [{}])[0]
 
         if not order_item or not order_item.get("column_values"):
-            logger.warning(f"[ProcessOrder] Order Board item {item_id} has no data")
+            logger.warning(f"[ProcessOrder] New Order Board item {item_id} has no data")
             return
 
-        # Parse columns using Order Board map
+        # Parse columns using New Order Board map
         cols = {}
         raw_values = {}  # Store raw JSON values for location columns etc.
         for cv in order_item.get("column_values", []):
             col_id = cv.get("id", "")
-            field_name = ORDER_BOARD_COLUMN_MAP.get(col_id, col_id)
+            field_name = NEW_ORDER_BOARD_COLUMN_MAP.get(col_id, col_id)
             cols[field_name] = cv.get("text", "") or ""
             # Parse raw value for structured columns (location, etc.)
             raw_val = cv.get("value", "")
@@ -254,11 +252,17 @@ async def handle_process_order_event(body: dict):
         doctor_first, doctor_last = split_full_name(doctor_full)
         doctor_addr = parse_address(cols.get("doctor_address", ""))
 
+        # On the New Order Board, primary_insurance is ALREADY the combined label
+        # (e.g. "Anthem BCBS Commercial") — no need to combine payer + type.
+        payer_name = cols.get("primary_insurance", "")
+        frequency_text = cols.get("frequency", "")
+        cgm_type = cols.get("cgm_type", "")
+
         logger.info(
             f"[ProcessOrder] Patient={patient_name}, "
-            f"Payer={cols.get('primary_insurance')}, "
-            f"Type={cols.get('insurance_type')}, "
-            f"Freq={cols.get('frequency')}"
+            f"Payer={payer_name}, "
+            f"Freq={frequency_text}, "
+            f"CGM={cgm_type}"
         )
 
         # ── Step 2: Build normalized order for compute functions ──
@@ -271,11 +275,17 @@ async def handle_process_order_event(body: dict):
         normalized["patient_city"]        = patient_addr.get("city", "")
         normalized["patient_state"]       = patient_addr.get("state", "")
         normalized["patient_postal_code"] = patient_addr.get("postal_code", "")
+        normalized["patient_gender"]      = cols.get("gender", "")
 
-        normalized["primary_insurance_name"] = cols.get("primary_insurance", "")
+        # Insurance — direct combined label from New Order Board
+        normalized["primary_insurance_name"] = payer_name
         normalized["member_id"]              = cols.get("member_id", "")
         normalized["subscription_type"]      = cols.get("subscription_type", "")
         normalized["diagnosis_code"]         = cols.get("diagnosis_code", "")
+
+        # CGM coverage and type for modifier/unit logic
+        normalized["cgm_coverage"] = cols.get("cgm_coverage", "")
+        normalized["cgm_type"]     = cgm_type
 
         normalized["doctor_name"]         = doctor_full
         normalized["doctor_first_name"]   = doctor_first
@@ -291,21 +301,12 @@ async def handle_process_order_event(body: dict):
         normalized["service_date"] = normalize_date(dos)
 
         # ── Step 3: Normalize product quantities ──
-        order_cols = dict(cols)
-        order_cols["pump_qty"] = cols.get("pump_qty", "")
-
-        # CGM sensors: Order Board doesn't have a4239_units, derive from monitor_qty
-        # If CGM type is set and monitor_qty > 0, sensors are usually same qty
-        cgm_type = cols.get("cgm_type", "")
-        monitor_qty = cols.get("monitor_qty", "")
-        # For sensors, we use monitor_qty as the sensor qty (each monitor order
-        # comes with sensors). This is a reasonable default; human can edit.
-        if cgm_type and monitor_qty and int(float(monitor_qty or "0")) > 0:
-            order_cols["cgm_sensor_qty"] = monitor_qty
-            order_cols["cgm_monitor_qty"] = monitor_qty
-        else:
-            order_cols["cgm_sensor_qty"] = ""
-            order_cols["cgm_monitor_qty"] = monitor_qty or ""
+        # New Order Board has explicit columns for all product quantities
+        order_cols = {}
+        order_cols["pump_qty"]        = cols.get("pump_qty", "")
+        order_cols["cgm_sensor_qty"]  = cols.get("cgm_sensor_qty", "")
+        order_cols["cgm_monitor_qty"] = cols.get("cgm_monitor_qty", "")
+        order_cols["cartridge_qty"]   = cols.get("cartridge_qty", "")
 
         # Infusion: combine inf_1 + inf_2
         try:
@@ -315,9 +316,6 @@ async def handle_process_order_event(body: dict):
             order_cols["infusion_set_qty"] = str(inf_total) if inf_total > 0 else ""
         except (ValueError, TypeError):
             order_cols["infusion_set_qty"] = ""
-
-        # Cartridge = same as infusion total
-        order_cols["cartridge_qty"] = order_cols.get("infusion_set_qty", "")
 
         logger.info(
             f"[ProcessOrder] Qty: pump={order_cols.get('pump_qty')}, "
@@ -332,15 +330,10 @@ async def handle_process_order_event(body: dict):
 
         if not product_subitems:
             logger.warning(f"[ProcessOrder] No products with qty > 0 for item {item_id}")
-            # Still create Claims Board item even with no products
-            # (human might want to add them manually)
 
         # Enrich products with insurance label and frequency
-        parent_payor = cols.get("primary_insurance", "")
-        insurance_type = cols.get("insurance_type", "")
-        insurance_label = resolve_subitem_insurance_label(parent_payor, insurance_type)
-
-        frequency_text = cols.get("frequency", "")
+        # On New Order Board, primary_insurance IS the subitem insurance label
+        # (e.g. "Anthem BCBS Commercial") — pass it directly.
         order_frequency = ""
         if "90" in frequency_text:
             order_frequency = "90-Days"
@@ -348,14 +341,12 @@ async def handle_process_order_event(body: dict):
             order_frequency = "60-Days"
 
         for product in product_subitems:
-            product["subitem_insurance_label"] = insurance_label
+            product["subitem_insurance_label"] = payer_name
             product["order_frequency"] = order_frequency
 
         # ── Step 5: Create Claims Board parent item ──
         logger.info("[ProcessOrder] Step 5: Creating Claims Board parent item")
         claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
-
-        # Item name: "Patient Name" (same format as existing Claims Board items)
         claims_item_name = patient_name
 
         create_item_mutation = """
@@ -366,10 +357,7 @@ async def handle_process_order_event(body: dict):
         }
         """
 
-        # Build column values JSON for Claims Board parent
-        import json as _json
-
-        # Map Order Board data → Claims Board parent columns
+        # Map New Order Board data → Claims Board parent columns
         parent_values = {}
 
         # DOB
@@ -379,6 +367,10 @@ async def handle_process_order_event(body: dict):
         # Member ID
         if cols.get("member_id"):
             parent_values["text_mktat89m"] = cols["member_id"]
+
+        # Secondary ID
+        if cols.get("secondary_id"):
+            parent_values["text_mm18c6z4"] = cols["secondary_id"]
 
         # Doctor
         if cols.get("doctor_name"):
@@ -392,16 +384,17 @@ async def handle_process_order_event(body: dict):
             if len(raw_date) == 8:
                 formatted_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
             else:
-                formatted_date = dos  # fallback to original
+                formatted_date = dos  # fallback
             parent_values["date_mkwr7spz"] = {"date": formatted_date}
 
-        # Primary Payor (status column — use label text)
-        if parent_payor:
-            parent_values["color_mkxmhypt"] = {"label": parent_payor}
+        # Primary Payor — direct combined label from New Order Board
+        if payer_name:
+            parent_values["color_mkxmhypt"] = {"label": payer_name}
 
-        # Insurance Type (status column)
-        if insurance_type:
-            parent_values["color_mkxmmm77"] = {"label": insurance_type}
+        # Secondary Insurance
+        secondary = cols.get("secondary_insurance", "")
+        if secondary:
+            parent_values["color_mkxmmm77"] = {"label": secondary}
 
         # Frequency (status column)
         if frequency_text:
@@ -435,29 +428,30 @@ async def handle_process_order_event(body: dict):
                 "address": doc_loc.get("address", cols.get("doctor_address", "")),
             }
 
-        # Product quantities on parent
-        if cols.get("pump_qty") and cols["pump_qty"] != "0":
-            parent_values["numeric_mkwz4zkt"] = cols["pump_qty"]
-        if cols.get("infusion_1_qty") and cols["infusion_1_qty"] != "0":
-            parent_values["numeric_mkwz337y"] = cols["infusion_1_qty"]
-        if cols.get("infusion_2_qty") and cols["infusion_2_qty"] != "0":
-            parent_values["numeric_mkwz9g9f"] = cols["infusion_2_qty"]
+        # Product quantities on Claims Board parent
+        pump_qty = cols.get("pump_qty", "")
+        if pump_qty and pump_qty != "0":
+            parent_values["numeric_mkwz4zkt"] = pump_qty
+        inf1_qty = cols.get("infusion_1_qty", "")
+        if inf1_qty and inf1_qty != "0":
+            parent_values["numeric_mkwz337y"] = inf1_qty
+        inf2_qty = cols.get("infusion_2_qty", "")
+        if inf2_qty and inf2_qty != "0":
+            parent_values["numeric_mkwz9g9f"] = inf2_qty
+        sensor_qty = cols.get("cgm_sensor_qty", "")
+        if sensor_qty and sensor_qty != "0":
+            parent_values["numeric_mkwz251j"] = sensor_qty   # A4239 units
+        monitor_qty = cols.get("cgm_monitor_qty", "")
         if monitor_qty and monitor_qty != "0":
             parent_values["numeric_mkwzb2f4"] = monitor_qty  # E2103 units
-            parent_values["numeric_mkwz251j"] = monitor_qty  # A4239 units
             parent_values["numeric_mkwzr5js"] = monitor_qty  # Monitor Qty
 
-        # Authorization
-        auth = cols.get("authorization", "")
-        if auth:
-            parent_values["text_mkwrb2t9"] = auth
+        # Auth ID
+        auth_id = cols.get("auth_id", "")
+        if auth_id:
+            parent_values["text_mkwrb2t9"] = auth_id
 
-        # Medicaid ID
-        medicaid_id = cols.get("medicaid_id", "")
-        if medicaid_id:
-            parent_values["text_mkwrwrpc"] = medicaid_id
-
-        # Customer Order (link back to Order Board item)
+        # Customer Order (link back to New Order Board item)
         parent_values["text_mkwzbcme"] = str(item_id)
 
         column_values_json = _json.dumps(parent_values)
@@ -490,21 +484,23 @@ async def handle_process_order_event(body: dict):
             populate_claims_board_subitems(claims_item_id, product_subitems)
             logger.info(f"[ProcessOrder] Created and populated {len(product_subitems)} subitems")
 
-        # ── Step 7: Update Order Board status → "Claim Sent to Review" ──
+        # ── Step 7: Update New Order Board status → "Claim Sent to Review" ──
         try:
-            order_board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
+            new_order_board_id = os.getenv("MONDAY_NEW_ORDER_BOARD_ID", "18405457690")
             update_mutation = """
             mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
               change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
             }
             """
+            # Use {"label": ...} for the status column on New Order Board
+            # since we just added these labels and don't know the index yet
             run_query(update_mutation, {
                 "itemId": str(item_id),
-                "boardId": str(order_board_id),
-                "columnId": "color_mkwtxw9r",  # Order Status column
-                "value": '{"index": 7}',  # "Claim Sent to Review"
+                "boardId": str(new_order_board_id),
+                "columnId": "status",  # Order Status on New Order Board
+                "value": _json.dumps({"label": "Claim Sent to Review"}),
             })
-            logger.info(f"[ProcessOrder] Order Board status → 'Claim Sent to Review'")
+            logger.info(f"[ProcessOrder] New Order Board status → 'Claim Sent to Review'")
         except Exception as e:
             logger.warning(f"[ProcessOrder] Failed to update Order Board status: {e}")
 
