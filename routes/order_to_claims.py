@@ -64,12 +64,67 @@ def extract_new_order_columns(column_values: list) -> dict:
     return result
 
 
+def _extract_product_quantities_from_subitems(subitems: list) -> dict:
+    """
+    Extract product quantities and variants from NOB subitems.
+    The NOB was duplicated from Order Board — subitems have the same structure.
+    Maps subitem names to PRODUCT_CATEGORIES qty_field/variant_field names.
+    """
+    from services.claim_builder_service import extract_subitem_columns
+
+    # Map subitem display names → product category fields
+    SUBITEM_NAME_TO_FIELDS = {}
+    for cat in PRODUCT_CATEGORIES:
+        for name in cat["item_names"]:
+            SUBITEM_NAME_TO_FIELDS[name.lower()] = {
+                "qty_field": cat["qty_field"],
+                "variant_field": cat.get("variant_field"),
+            }
+
+    result = {}
+    for sub in subitems:
+        sub_name = sub.get("name", "").strip()
+        sub_cols = extract_subitem_columns(sub.get("column_values", []))
+
+        # Match subitem name to a product category
+        fields = SUBITEM_NAME_TO_FIELDS.get(sub_name.lower())
+        if not fields:
+            # Try partial match
+            for key, val in SUBITEM_NAME_TO_FIELDS.items():
+                if key in sub_name.lower() or sub_name.lower() in key:
+                    fields = val
+                    break
+
+        if fields:
+            qty = sub_cols.get("quantity", "")
+            if qty:
+                result[fields["qty_field"]] = qty
+            # Extract variant (cgm_type, pump_type, etc.)
+            variant_field = fields.get("variant_field")
+            if variant_field:
+                variant = sub_cols.get("cgm_type", "") or sub_cols.get("pump_type", "") or sub_cols.get("infusion_set", "")
+                if variant:
+                    result[variant_field] = variant
+
+    return result
+
+
 def new_order_to_normalized(monday_item: dict) -> dict:
     """
-    Convert a New Order Board item (flat, no subitems) into a
-    normalized order dict suitable for the claim builder pipeline.
+    Convert a New Order Board item into a normalized order dict
+    suitable for the claim builder pipeline.
+
+    NOTE: The NOB was duplicated from Order Board — it has the SAME
+    subitem structure (not flat as originally assumed). Product quantities
+    are extracted from subitems, not parent-level columns.
     """
     cols = extract_new_order_columns(monday_item.get("column_values", []))
+
+    # Extract product quantities from subitems (NOB has same structure as Order Board)
+    subitems = monday_item.get("subitems", [])
+    if subitems:
+        subitem_quantities = _extract_product_quantities_from_subitems(subitems)
+        cols.update(subitem_quantities)
 
     patient_full_name = monday_item.get("name", "")
     patient_first, patient_last = split_full_name(patient_full_name)
@@ -114,9 +169,10 @@ def new_order_to_normalized(monday_item: dict) -> dict:
     normalized["doctor_postal_code"]  = doctor_addr.get("postal_code", "")
     normalized["doctor_phone"]        = cols.get("doctor_phone", "")
 
-    # Order metadata
-    normalized["order_date"]    = normalize_date(cols.get("order_date", ""))
-    normalized["service_date"]  = normalize_date(cols.get("order_date", ""))
+    # Order metadata — DOS from parent, or fall back to subitem order_date
+    dos = cols.get("dos", "")
+    normalized["order_date"]    = normalize_date(dos or cols.get("order_date", ""))
+    normalized["service_date"]  = normalize_date(dos or cols.get("order_date", ""))
     normalized["auth_id"]       = cols.get("auth_id", "")
 
     return normalized, cols

@@ -399,14 +399,14 @@ def populate_era_data_on_claims_item(claims_item_id: str, era_data: dict) -> Non
     }
     """
 
-    # Phase 1 parent fields — from claimsvisualizer.py
+    # Phase 1 parent fields — VERIFIED against live Claims Board (2026-03-31)
     field_to_column = {
         "primary_paid":            ("numeric_mm115q76", "number"),  # Primary Paid (A)
         "pr_amount":               ("numeric_mkxmc2rh", "number"),  # PR Amount (C)
         "paid_date":               ("date_mm11zg2f",    "date"),    # Primary Paid Date (D)
         "check_number":            ("text_mm11m3fh",    "text"),    # Check #
         "primary_status":          ("text_mkzck8tw",    "text"),    # Primary -->
-        "raw_patient_control_num": ("text_mm0fa4vk",    "text"),    # Raw PCN
+        "raw_patient_control_num": ("text_mm1gkf40",    "text"),    # Raw Patient Control Number
     }
 
     for field, (column_id, col_type) in field_to_column.items():
@@ -437,32 +437,33 @@ def populate_era_data_on_claims_item(claims_item_id: str, era_data: dict) -> Non
         populate_era_service_line_subitems(claims_item_id, children)
 
 
-# Subitem column ID mapping
-# Based on Claims Board subitem columns fetched
+# Subitem column ID mapping — VERIFIED against live Monday board (2026-03-31)
+# Board ID: 18245429979 (Claims Board subitems)
+# CRITICAL FIX: Previous mapping had IDs shifted by one position.
 SUBITEM_ERA_COLUMN_MAP = {
-    # ERA field name         → (column_id,              type)
-    "Primary Paid":          ("numeric_mm1czbyg",       "number"),  # Primary Paid
-    "Raw Service Date":      ("date_mm11hscn",          "date"),    # Service Date
-    "Raw Line Item Charge":  ("numeric_mm11v6th",       "number"),  # Charge Amount
-    "Patient Control #":     ("text_mm16qhea",          "text"),    # Patient Control #
-    "Claim Status Code":     ("text_mm1gzsan",          "text"),    # Claim Status Code
-    "Raw Line Control #":    ("text_mm1g4yd9",          "text"),    # Line Item Control #
-    "Raw Allowed Actual":    ("numeric_mm1gg3pj",       "number"),  # Allowed Actual
-    "Parsed PR Amount":      ("numeric_mm1gtdts",       "number"),  # Parsed PR Amount
-    "Parsed Deductible":     ("numeric_mm1gredn",       "number"),  # Parsed Deductible
-    "Parsed Coinsurance":    ("numeric_mm1g3nvh",       "number"),  # Parsed Coinsurance
-    "Parsed Copay":          ("numeric_mm11aqr1",       "number"),  # Parsed Copay
-    "Parsed Other PR":       ("numeric_mm1gtd3e",       "number"),  # Parsed Other PR
-    "Parsed CO Amount":      ("numeric_mm1g48c",        "number"),  # Parsed CO Amount
-    "Parsed CO-45":          ("numeric_mm1gken",        "number"),  # Parsed CO-45
-    "Parsed CO-253":         ("numeric_mm1gt3ky",       "number"),  # Parsed CO-253
-    "Parsed Other CO":       ("numeric_mm1g3vgp",       "number"),  # Parsed Other CO
-    "Parsed OA Amount":      ("numeric_mm1grbc3",       "number"),  # Parsed OA
-    "Parsed PI Amount":      ("numeric_mm1gh22d",       "number"),  # Parsed PI
-    "Parsed Remark Codes":   ("text_mm1g6tw3",          "text"),    # Remark Codes
-    "Parsed Remark Text":    ("long_text_mm1ggyz6",     "long_text"), # Remark Text
-    "Parsed Adj Codes":      ("text_mm1gt1dh",          "text"),    # Adjustment Codes
-    "Parsed Adj Reasons":    ("long_text_mm1g7xmy",     "long_text"), # Adjustment Reasons
+    # ERA field name         → (column_id,              type)       # Monday column title
+    "Primary Paid":          ("numeric_mm11v6th",       "number"),  # Primary Paid
+    "Raw Service Date":      ("text_mm1ge9yn",          "text"),    # Raw Service Date
+    "Raw Line Item Charge":  ("numeric_mm1gg3pj",       "number"),  # Raw Line Item Charge Amount
+    "Patient Control #":     ("text_mm1gzsan",          "text"),    # Patient Control #
+    "Claim Status Code":     ("text_mm1g4yd9",          "text"),    # Claim Status Code
+    "Raw Line Control #":    ("text_mm1gat8c",          "text"),    # Raw Line Item Control Number
+    "Raw Allowed Actual":    ("numeric_mm1gtdts",       "number"),  # Raw Allowed Actual
+    "Parsed PR Amount":      ("numeric_mm1gredn",       "number"),  # Parsed PR Amount
+    "Parsed Deductible":     ("numeric_mm1g3nvh",       "number"),  # Parsed Deductible Amount
+    "Parsed Coinsurance":    ("numeric_mm11aqr1",       "number"),  # Parsed Coinsurance Amount
+    "Parsed Copay":          ("numeric_mm1gtd3e",       "number"),  # Parsed Copay Amount
+    "Parsed Other PR":       ("numeric_mm1g48c",        "number"),  # Parsed Other PR Amount
+    "Parsed CO Amount":      ("numeric_mm1gken",        "number"),  # Parsed CO Amount
+    "Parsed CO-45":          ("numeric_mm1gt3ky",       "number"),  # Parsed CO-45 Amount
+    "Parsed CO-253":         ("numeric_mm1g3vgp",       "number"),  # Parsed CO-253 Amount
+    "Parsed Other CO":       ("numeric_mm1grbc3",       "number"),  # Parsed Other CO Amount
+    "Parsed OA Amount":      ("numeric_mm1gh22d",       "number"),  # Parsed OA Amount
+    "Parsed PI Amount":      ("numeric_mm1gqkvz",       "number"),  # Parsed PI Amount
+    "Parsed Remark Codes":   ("text_mm1g6tw3",          "text"),    # Parsed Remark Codes
+    "Parsed Remark Text":    ("long_text_mm1ggyz6",     "long_text"), # Parsed Remark Text
+    "Parsed Adj Codes":      ("text_mm1gt1dh",          "text"),    # Parsed Adjustment Codes
+    "Parsed Adj Reasons":    ("long_text_mm1g7xmy",     "long_text"), # Parsed Adjustment Reasons
 }
 
 def _get_column_value(item_id: str, column_id: str) -> str:
@@ -718,35 +719,60 @@ def get_new_order_item(item_id: str) -> dict:
 
 
 def _get_mock_new_order_item(item_id: str) -> dict:
-    """Return a realistic mock New Order Board item (flat, no subitems)."""
+    """
+    Return a realistic mock New Order Board item.
+    NOB was duplicated from Order Board — same column IDs, same subitem structure.
+    Uses REAL column IDs from live board (18403054769).
+    """
     return {
         "id": item_id,
         "name": "John TestPatient",
         "column_values": [
-            {"id": "nob_gender",            "text": "Male",        "value": None},
-            {"id": "nob_dob",               "text": "01/15/1980",  "value": None},
-            {"id": "nob_phone",             "text": "555-123-4567", "value": None},
-            {"id": "nob_patient_address",   "text": "123 Test St, Brooklyn, NY 11221", "value": None},
-            {"id": "nob_diagnosis_code",    "text": "E10.65",      "value": None},
-            {"id": "nob_cgm_coverage",      "text": "Insulin",     "value": None},
-            {"id": "nob_doctor_name",       "text": "Jane Doctor", "value": None},
-            {"id": "nob_doctor_npi",        "text": "1234567890",  "value": None},
-            {"id": "nob_doctor_address",    "text": "456 Medical Ave, New York, NY 10001", "value": None},
-            {"id": "nob_doctor_phone",      "text": "555-987-6543", "value": None},
-            {"id": "nob_primary_insurance", "text": "Anthem BCBS Commercial", "value": None},
-            {"id": "nob_member_id",         "text": "TEST123456",  "value": None},
-            {"id": "nob_secondary_id",      "text": "",            "value": None},
-            {"id": "nob_subscription_type", "text": "Individual",  "value": None},
-            {"id": "nob_pump_qty",          "text": "1",           "value": None},
-            {"id": "nob_infusion_set_qty",  "text": "10",          "value": None},
-            {"id": "nob_cartridge_qty",     "text": "10",          "value": None},
-            {"id": "nob_cgm_sensor_qty",    "text": "6",           "value": None},
-            {"id": "nob_cgm_monitor_qty",   "text": "1",           "value": None},
-            {"id": "nob_pump_type",         "text": "t:slim X2",   "value": None},
-            {"id": "nob_cgm_type",          "text": "Dexcom G7",   "value": None},
-            {"id": "nob_order_date",        "text": "2026-03-15",  "value": None},
-            {"id": "nob_order_status",      "text": "Ready",       "value": None},
-            {"id": "nob_auth_id",           "text": "",            "value": None},
+            # Patient info (same IDs as Order Board)
+            {"id": "color_mm1svmyk",       "text": "Male",        "value": None},   # Gender (status)
+            {"id": "text_mm187t6a",        "text": "01/15/1980",  "value": None},   # DOB
+            {"id": "phone_mm18rr9v",       "text": "555-123-4567", "value": None},  # Phone
+            {"id": "location_mm187v29",    "text": "123 Test St, Brooklyn, NY 11221", "value": None},  # Address
+            {"id": "color_mm189t0b",       "text": "E10.65",      "value": None},   # Diagnosis Code (status)
+            {"id": "color_mm18ds28",       "text": "Insulin",     "value": None},   # CGM Coverage (status)
+            # Doctor info
+            {"id": "text_mm18w2y4",        "text": "Jane Doctor", "value": None},   # Doctor Name
+            {"id": "text_mm18x1kj",        "text": "1234567890",  "value": None},   # Doctor NPI
+            {"id": "location_mm18qfed",    "text": "456 Medical Ave, New York, NY 10001", "value": None},  # Doctor Address
+            {"id": "phone_mm18t5ct",       "text": "555-987-6543", "value": None},  # Doctor Phone
+            # Insurance
+            {"id": "color_mm18jhq5",       "text": "Anthem BCBS Commercial", "value": None},  # Primary Insurance (status)
+            {"id": "text_mm18s3fe",        "text": "TEST123456",  "value": None},   # Member ID
+            {"id": "text_mm18c6z4",        "text": "",            "value": None},   # Secondary ID
+            {"id": "color_mm18h05q",       "text": "Individual",  "value": None},   # Subscription Type (status)
+            # 277 / tracking
+            {"id": "text_mm1ra2v1",        "text": "",            "value": None},   # Claim ID
+            {"id": "date_mm1ssf5g",        "text": "2026-03-15",  "value": None},   # DOS
+        ],
+        # NOB has subitems (same structure as Order Board since it was duplicated)
+        "subitems": [
+            {
+                "id": "mock_nob_sub_1",
+                "name": "CGM Sensors",
+                "column_values": [
+                    {"id": "date0",             "text": "2026-03-15",  "value": None},  # Order Date
+                    {"id": "color_mm18p9f4",    "text": "Anthem BCBS Commercial", "value": None},
+                    {"id": "text_mm18zcs4",     "text": "TEST123456",  "value": None},  # Member ID
+                    {"id": "numeric_mm18t2q9",  "text": "6",           "value": None},  # Quantity
+                    {"id": "color_mm185yjy",    "text": "Dexcom G7",   "value": None},  # CGM Type
+                ],
+            },
+            {
+                "id": "mock_nob_sub_2",
+                "name": "Insulin Pump",
+                "column_values": [
+                    {"id": "date0",             "text": "2026-03-15",  "value": None},
+                    {"id": "color_mm18p9f4",    "text": "Anthem BCBS Commercial", "value": None},
+                    {"id": "text_mm18zcs4",     "text": "TEST123456",  "value": None},
+                    {"id": "numeric_mm18t2q9",  "text": "1",           "value": None},
+                    {"id": "color_mm18e5yq",    "text": "t:slim X2",   "value": None},  # Pump Type
+                ],
+            },
         ],
     }
 
@@ -795,42 +821,66 @@ def get_claims_board_item(item_id: str) -> dict:
 
 
 def _get_mock_claims_board_item(item_id: str) -> dict:
-    """Return a realistic mock Claims Board item with 5 product subitems."""
+    """
+    Return a realistic mock Claims Board item with product subitems.
+    Uses REAL column IDs from live Claims Board (18245429780) and
+    Subitems board (18245429979).
+    """
     return {
         "id": item_id,
         "name": "John TestPatient - Anthem BCBS Commercial",
         "column_values": [
-            {"id": "text_mktat89m",     "text": "TEST123456",     "value": None},
-            {"id": "text_mkp3y5ax",     "text": "01/15/1980",     "value": None},
-            {"id": "text_mkxr2r9b",     "text": "1234567890",     "value": None},
-            {"id": "text_mkxrh4a4",     "text": "Jane Doctor",    "value": None},
-            {"id": "text_mkwzbcme",     "text": "",               "value": None},
-            {"id": "date_mkwr7spz",     "text": "2026-03-15",     "value": None},
-            {"id": "date_mm14rk8d",     "text": "",               "value": None},
+            # Patient / Insurance
+            {"id": "text_mktat89m",      "text": "TEST123456",     "value": None},   # Member ID
+            {"id": "text_mkp3y5ax",      "text": "01/15/1980",     "value": None},   # DOB
+            {"id": "color_mkxmhypt",     "text": "Anthem BCBS Commercial", "value": None},  # Primary Payor (status)
+            {"id": "text_mm1gcz3y",      "text": "",               "value": None},   # PR Payor ID
+            {"id": "color_mky2gpz5",     "text": "E10.65",         "value": None},   # Diagnosis Code (status)
+            {"id": "location_mkxxpesw",  "text": "123 Test St, Brooklyn, NY 11221", "value": None},  # Patient Address
+            {"id": "color_mky1qvcf",     "text": "CGM",            "value": None},   # Subscription Type (status)
+            {"id": "color_mkxmmm77",     "text": "Commercial",     "value": None},   # Insurance Type (status)
+            # Doctor
+            {"id": "text_mkxrh4a4",      "text": "Jane Doctor",    "value": None},   # Doctor Name
+            {"id": "text_mkxr2r9b",      "text": "1234567890",     "value": None},   # Doctor NPI
+            {"id": "location_mkxr251b",  "text": "456 Medical Ave, New York, NY 10001", "value": None},  # Doctor Address
+            # Correlation / tracking
+            {"id": "text_mkwzbcme",      "text": "",               "value": None},   # Correlation ID (PCN)
+            {"id": "text_mm1gkf40",      "text": "",               "value": None},   # Raw PCN
+            {"id": "text_mm1gefbz",      "text": "",               "value": None},   # Raw Payer Claim Control
+            # Dates
+            {"id": "date_mkwr7spz",      "text": "2026-03-15",     "value": None},   # DOS
+            {"id": "date_mm14rk8d",      "text": "",               "value": None},   # Claim Sent Date
+            # ERA parent fields
+            {"id": "numeric_mm115q76",   "text": "",               "value": None},   # Primary Paid (A)
+            {"id": "numeric_mkxmc2rh",   "text": "",               "value": None},   # PR Amount (C)
+            {"id": "color_mkxmywtb",     "text": "Outstanding",    "value": None},   # Primary Status
+            {"id": "color_mm11nnfy",     "text": "",               "value": None},   # Primary ERA Status
         ],
         "subitems": [
             {
                 "id": "mock_cb_sub_1",
                 "name": "Insulin Pump",
                 "column_values": [
-                    {"id": "cb_sub_hcpc_code",     "text": "E0784",  "value": None},
-                    {"id": "cb_sub_claim_qty",     "text": "1",      "value": None},
-                    {"id": "cb_sub_units",         "text": "1",      "value": None},
-                    {"id": "cb_sub_modifiers",     "text": "",       "value": None},
-                    {"id": "cb_sub_charge_amount", "text": "2500.00","value": None},
-                    {"id": "cb_sub_est_pay",       "text": "2500.00","value": None},
+                    {"id": "color_mm1cdvq8",     "text": "E0784",   "value": None},   # HCPC Code (STATUS)
+                    {"id": "numeric_mm1czbyg",   "text": "1",       "value": None},   # Order Quantity
+                    {"id": "formula_mm1cv57q",   "text": "1",       "value": None},   # Claim Qty (FORMULA — read only)
+                    {"id": "formula_mm1c7nen",   "text": "2500.00", "value": None},   # Est. Pay (FORMULA — read only)
+                    {"id": "color_mm1cjcmg",     "text": "Anthem BCBS Commercial", "value": None},  # Primary Insurance (status)
+                    {"id": "color_mm1cnfsb",     "text": "Monthly",  "value": None},  # Order Frequency (status)
+                    {"id": "color_mm1148h5",     "text": "Outstanding", "value": None},  # Primary (status)
                 ],
             },
             {
                 "id": "mock_cb_sub_2",
                 "name": "CGM Sensors",
                 "column_values": [
-                    {"id": "cb_sub_hcpc_code",     "text": "A4239",  "value": None},
-                    {"id": "cb_sub_claim_qty",     "text": "6",      "value": None},
-                    {"id": "cb_sub_units",         "text": "3",      "value": None},
-                    {"id": "cb_sub_modifiers",     "text": "KS",     "value": None},
-                    {"id": "cb_sub_charge_amount", "text": "450.00", "value": None},
-                    {"id": "cb_sub_est_pay",       "text": "450.00", "value": None},
+                    {"id": "color_mm1cdvq8",     "text": "A4239",   "value": None},   # HCPC Code (STATUS)
+                    {"id": "numeric_mm1czbyg",   "text": "6",       "value": None},   # Order Quantity
+                    {"id": "formula_mm1cv57q",   "text": "3",       "value": None},   # Claim Qty (FORMULA — read only)
+                    {"id": "formula_mm1c7nen",   "text": "450.00",  "value": None},   # Est. Pay (FORMULA — read only)
+                    {"id": "color_mm1cjcmg",     "text": "Anthem BCBS Commercial", "value": None},
+                    {"id": "color_mm1cnfsb",     "text": "Quarterly", "value": None},
+                    {"id": "color_mm1148h5",     "text": "Outstanding", "value": None},
                 ],
             },
         ],
@@ -961,6 +1011,8 @@ def populate_claims_board_subitems(claims_item_id: str, product_subitems: list) 
     }
     """
 
+    from claims_board_config import HCPC_STATUS_INDEX
+
     for product in product_subitems:
         product_name = product.get("product_name", "Unknown")
 
@@ -989,40 +1041,43 @@ def populate_claims_board_subitems(claims_item_id: str, product_subitems: list) 
 
             logger.info(f"Created Claims Board subitem {subitem_id}: {product_name}")
 
-            # Write pre-computed values
-            field_map = {
-                "hcpc_code":     product.get("hcpc_code", ""),
-                "claim_qty":     product.get("claim_qty", ""),
-                "units":         product.get("units", ""),
-                "modifiers":     ",".join(product.get("modifiers", [])),
-                "charge_amount": product.get("charge_amount", ""),
-                "est_pay":       product.get("est_pay", ""),
-            }
+            # ── HCPC Code: STATUS column — must set by label index ──
+            hcpc_code = product.get("hcpc_code", "")
+            if hcpc_code:
+                hcpc_index = HCPC_STATUS_INDEX.get(hcpc_code)
+                if hcpc_index is not None:
+                    try:
+                        run_query(update_mutation, {
+                            "itemId":   str(subitem_id),
+                            "boardId":  str(subitem_board_id),
+                            "columnId": "color_mm1cdvq8",  # HCPC Code (STATUS type)
+                            "value":    '{"index": ' + hcpc_index + '}',
+                        })
+                        logger.info(f"  Subitem {product_name}: set hcpc_code = {hcpc_code} (index {hcpc_index})")
+                    except Exception as e:
+                        logger.warning(f"  Subitem {product_name}: failed hcpc_code: {e}")
+                else:
+                    logger.warning(f"  Subitem {product_name}: unknown HCPC code '{hcpc_code}' — not in HCPC_STATUS_INDEX")
 
-            for field_name, value in field_map.items():
-                if not value:
-                    continue
-
-                col_id = CLAIMS_BOARD_SUBITEM_WRITE_MAP.get(field_name)
-                if not col_id:
-                    logger.warning(f"No column ID mapped for subitem field: {field_name}")
-                    continue
-
+            # ── Order Quantity: writable numeric column ──
+            order_qty = product.get("claim_qty", "") or product.get("units", "")
+            if order_qty:
                 try:
-                    if col_id.startswith("numeric_"):
-                        formatted = str(value)
-                    else:
-                        formatted = f'"{value}"'
-
                     run_query(update_mutation, {
                         "itemId":   str(subitem_id),
                         "boardId":  str(subitem_board_id),
-                        "columnId": col_id,
-                        "value":    formatted,
+                        "columnId": "numeric_mm1czbyg",  # Order Quantity (writable)
+                        "value":    str(order_qty),
                     })
-                    logger.info(f"  Subitem {product_name}: set {field_name} = {value}")
+                    logger.info(f"  Subitem {product_name}: set order_qty = {order_qty}")
                 except Exception as e:
-                    logger.warning(f"  Subitem {product_name}: failed {field_name}: {e}")
+                    logger.warning(f"  Subitem {product_name}: failed order_qty: {e}")
+
+            # NOTE: claim_qty (formula_mm1cv57q) and est_pay (formula_mm1c7nen)
+            # are FORMULA columns — read-only, cannot be written via API.
+            # They compute automatically from order_qty and other board formulas.
+
+            # NOTE: No modifiers column exists on Claims Board subitems.
 
         except Exception as e:
             logger.warning(f"Failed to create subitem for {product_name}: {e}")
@@ -1059,9 +1114,29 @@ def update_claims_board_277(claims_item_id: str, status: str, rejection_reason: 
     }
     """
 
-    # Update 277 status
-    col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("status_277", "cb_277_status")
-    label_index = CLAIMS_BOARD_277_STATUS_TO_INDEX.get(status, "0")
+    # Update 277 status via primary_status column (color_mkxmywtb)
+    # NOTE: No dedicated 277 Status column exists on Claims Board.
+    # We use the Primary status column which has labels: Outstanding/Paid/Denied/etc.
+    # Map 277 statuses to Primary status labels:
+    #   Accepted → Outstanding (claim is in-flight, awaiting payment)
+    #   Rejected → Denied
+    #   Pending  → Outstanding
+    STATUS_277_TO_PRIMARY = {
+        "Accepted": "Outstanding",
+        "Rejected": "Denied",
+        "Pending":  "Outstanding",
+    }
+
+    # Primary status label indexes on Claims Board parent
+    PRIMARY_STATUS_INDEX = {
+        "Outstanding": "0",
+        "Paid":        "1",
+        "Denied":      "5",
+    }
+
+    col_id = "color_mkxmywtb"  # Primary status column (real ID)
+    primary_label = STATUS_277_TO_PRIMARY.get(status, "Outstanding")
+    label_index = PRIMARY_STATUS_INDEX.get(primary_label, "0")
     status_value = '{"index": ' + label_index + '}'
 
     try:
@@ -1071,19 +1146,20 @@ def update_claims_board_277(claims_item_id: str, status: str, rejection_reason: 
             "columnId": col_id,
             "value": status_value,
         })
-        logger.info(f"Claims Board 277 status → {status}")
+        logger.info(f"Claims Board 277 status → {status} (primary_status={primary_label})")
     except Exception as e:
         logger.warning(f"Failed to update Claims Board 277 status: {e}")
 
-    # Store rejection reason if rejected
+    # Store rejection reason in primary_status_text column (text_mkzck8tw)
+    # This is the "Primary -->" text field on Claims Board parent
     if status != "Accepted" and rejection_reason:
-        reason_col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("rejection_reason_277", "cb_277_reason")
+        reason_col_id = "text_mkzck8tw"  # Primary --> (text field, real ID)
         try:
             run_query(mutation, {
                 "itemId": str(claims_item_id),
                 "boardId": str(claims_board_id),
                 "columnId": reason_col_id,
-                "value": f'"{rejection_reason}"',
+                "value": f'"277 Rejected: {rejection_reason}"',
             })
         except Exception as e:
             logger.warning(f"Failed to store Claims Board rejection reason: {e}")
@@ -1201,8 +1277,9 @@ def update_existing_claims_subitems(claims_item_id: str, children: list) -> None
             hcpc_to_subitem[sub_name.upper()] = sub
 
         # Also check if subitem has a HCPC code in its columns
+        # color_mm1cdvq8 is the real HCPC Code column (STATUS type) on Claims Board subitems
         for col in sub.get("column_values", []):
-            if col.get("id") in ("cb_sub_hcpc_code",) and col.get("text"):
+            if col.get("id") == "color_mm1cdvq8" and col.get("text"):
                 hcpc_to_subitem[col["text"].upper()] = sub
 
     # Also build name-to-subitem mapping for product name matching

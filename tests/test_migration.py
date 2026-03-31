@@ -85,13 +85,13 @@ class TestClaimsBoardConfig:
         assert HCPC_TO_PRODUCT.get("A4225") == "Cartridge"
         assert HCPC_TO_PRODUCT.get("A4232") == "Cartridge"
 
-    def test_validate_config_catches_placeholders(self):
-        """Validation should detect placeholder column IDs."""
+    def test_validate_config_no_placeholders(self):
+        """All column IDs should be real (no cb_/nob_ placeholders remaining)."""
         from claims_board_config import validate_claims_board_config
         issues = validate_claims_board_config()
-        # Should detect placeholder columns (cb_* and nob_*)
+        # All column IDs have been replaced with real Monday IDs
         placeholder_issues = [i for i in issues if "placeholder" in i.lower()]
-        assert len(placeholder_issues) > 0
+        assert len(placeholder_issues) == 0
 
     def test_board_id_helpers(self):
         """Board ID helpers should read from env."""
@@ -212,56 +212,62 @@ class TestClaimsBuilderService:
     """Test Claims Board item to normalized orders conversion."""
 
     def get_mock_claims_board_item(self):
-        """Helper to create a mock Claims Board item."""
+        """Helper to create a mock Claims Board item with REAL column IDs."""
         return {
             "id": "test_cb_123",
             "name": "John TestPatient - Anthem BCBS Commercial",
             "column_values": [
-                {"id": "text_mktat89m",      "text": "TEST123456",     "value": None},
-                {"id": "text_mkp3y5ax",      "text": "01/15/1980",     "value": None},
-                {"id": "text_mkxr2r9b",      "text": "1234567890",     "value": None},
-                {"id": "text_mkxrh4a4",      "text": "Jane Doctor",    "value": None},
-                {"id": "text_mkwzbcme",      "text": "",               "value": None},
-                {"id": "date_mkwr7spz",      "text": "2026-03-15",     "value": None},
-                {"id": "cb_gender",          "text": "Male",           "value": None},
-                {"id": "cb_diagnosis_code",  "text": "E10.65",         "value": None},
-                {"id": "cb_patient_address", "text": "123 Test St, Brooklyn, NY 11221", "value": None},
-                {"id": "cb_doctor_address",  "text": "456 Medical Ave, New York, NY 10001", "value": None},
-                {"id": "cb_doctor_phone",    "text": "555-987-6543",   "value": None},
-                {"id": "cb_cgm_coverage",    "text": "Insulin",        "value": None},
+                # Patient / Insurance (real Claims Board parent column IDs)
+                {"id": "text_mktat89m",      "text": "TEST123456",     "value": None},   # Member ID
+                {"id": "text_mkp3y5ax",      "text": "01/15/1980",     "value": None},   # DOB
+                {"id": "text_mkxr2r9b",      "text": "1234567890",     "value": None},   # Doctor NPI
+                {"id": "text_mkxrh4a4",      "text": "Jane Doctor",    "value": None},   # Doctor Name
+                {"id": "text_mkwzbcme",      "text": "",               "value": None},   # Correlation ID
+                {"id": "date_mkwr7spz",      "text": "2026-03-15",     "value": None},   # DOS
+                {"id": "color_mky2gpz5",     "text": "E10.65",         "value": None},   # Diagnosis Code (status)
+                {"id": "location_mkxxpesw",  "text": "123 Test St, Brooklyn, NY 11221", "value": None},  # Patient Address
+                {"id": "location_mkxr251b",  "text": "456 Medical Ave, New York, NY 10001", "value": None},  # Doctor Address
+                {"id": "color_mky1qvcf",     "text": "CGM",            "value": None},   # Subscription Type (status)
+                {"id": "color_mkxmmm77",     "text": "Commercial",     "value": None},   # Insurance Type (status)
+                {"id": "color_mkxmywtb",     "text": "Outstanding",    "value": None},   # Primary Status
+                # NOTE: No Gender, CGM Coverage, or Doctor Phone columns on Claims Board
             ],
             "subitems": [
                 {
                     "id": "sub_1",
                     "name": "Insulin Pump",
                     "column_values": [
-                        {"id": "cb_sub_hcpc_code",     "text": "E0784",   "value": None},
-                        {"id": "cb_sub_claim_qty",     "text": "1",       "value": None},
-                        {"id": "cb_sub_units",         "text": "1",       "value": None},
-                        {"id": "cb_sub_modifiers",     "text": "",        "value": None},
-                        {"id": "cb_sub_charge_amount", "text": "2500.00", "value": None},
+                        # Real Claims Board subitem column IDs
+                        {"id": "color_mm1cdvq8",     "text": "E0784",   "value": None},   # HCPC Code (STATUS)
+                        {"id": "numeric_mm1czbyg",   "text": "1",       "value": None},   # Order Quantity
+                        {"id": "formula_mm1cv57q",   "text": "1",       "value": None},   # Claim Qty (FORMULA)
+                        {"id": "formula_mm1c7nen",   "text": "2500.00", "value": None},   # Est. Pay (FORMULA)
+                        {"id": "color_mm1cjcmg",     "text": "Anthem BCBS Commercial", "value": None},
+                        {"id": "color_mm1cnfsb",     "text": "Monthly",  "value": None},
                     ],
                 },
                 {
                     "id": "sub_2",
                     "name": "CGM Sensors",
                     "column_values": [
-                        {"id": "cb_sub_hcpc_code",     "text": "A4239",  "value": None},
-                        {"id": "cb_sub_claim_qty",     "text": "6",      "value": None},
-                        {"id": "cb_sub_units",         "text": "3",      "value": None},
-                        {"id": "cb_sub_modifiers",     "text": "KS",     "value": None},
-                        {"id": "cb_sub_charge_amount", "text": "450.00", "value": None},
+                        {"id": "color_mm1cdvq8",     "text": "A4239",  "value": None},
+                        {"id": "numeric_mm1czbyg",   "text": "6",      "value": None},
+                        {"id": "formula_mm1cv57q",   "text": "3",      "value": None},   # Claim Qty (FORMULA)
+                        {"id": "formula_mm1c7nen",   "text": "450.00", "value": None},   # Est. Pay (FORMULA)
+                        {"id": "color_mm1cjcmg",     "text": "Anthem BCBS Commercial", "value": None},
+                        {"id": "color_mm1cnfsb",     "text": "Quarterly", "value": None},
                     ],
                 },
                 {
                     "id": "sub_3",
                     "name": "CGM Monitor",
                     "column_values": [
-                        {"id": "cb_sub_hcpc_code",     "text": "",  "value": None},
-                        {"id": "cb_sub_claim_qty",     "text": "",  "value": None},
-                        {"id": "cb_sub_units",         "text": "",  "value": None},
-                        {"id": "cb_sub_modifiers",     "text": "",  "value": None},
-                        {"id": "cb_sub_charge_amount", "text": "",  "value": None},
+                        {"id": "color_mm1cdvq8",     "text": "",  "value": None},
+                        {"id": "numeric_mm1czbyg",   "text": "",  "value": None},
+                        {"id": "formula_mm1cv57q",   "text": "",  "value": None},
+                        {"id": "formula_mm1c7nen",   "text": "",  "value": None},
+                        {"id": "color_mm1cjcmg",     "text": "",  "value": None},
+                        {"id": "color_mm1cnfsb",     "text": "",  "value": None},
                     ],
                 },
             ],
@@ -279,15 +285,16 @@ class TestClaimsBuilderService:
         # First order should be Insulin Pump
         pump_order = orders[0]
         assert pump_order["pre_computed_hcpc"] == "E0784"
-        assert pump_order["pre_computed_units"] == "1"
-        assert pump_order["pre_computed_charge"] == "2500.00"
+        assert pump_order["pre_computed_units"] == "1"      # from claim_qty formula
+        assert pump_order["pre_computed_charge"] == "2500.00"  # from est_pay formula
         assert pump_order["member_id"] == "TEST123456"
 
         # Second order should be CGM Sensors
         sensor_order = orders[1]
         assert sensor_order["pre_computed_hcpc"] == "A4239"
-        assert sensor_order["pre_computed_units"] == "3"
-        assert sensor_order["pre_computed_modifiers"] == ["KS"]
+        assert sensor_order["pre_computed_units"] == "3"     # from claim_qty formula
+        # No modifiers column on Claims Board — always empty list
+        assert sensor_order["pre_computed_modifiers"] == []
 
     def test_claims_board_extracts_patient_name(self):
         """Should strip payer name from patient name."""
@@ -352,8 +359,9 @@ class TestMondayServiceNewFunctions:
         item = get_new_order_item("12345")
         assert item["id"] == "12345"
         assert item["name"] == "John TestPatient"
-        # Should have flat columns (no subitems)
-        assert "subitems" not in item or item.get("subitems") is None
+        # NOB was duplicated from Order Board — has subitems (same structure)
+        assert "subitems" in item
+        assert len(item["subitems"]) >= 1
 
     def test_get_claims_board_item_mock(self):
         """Should return mock Claims Board data in mock mode."""
@@ -688,8 +696,8 @@ class TestIntegrationClaimsBoard:
 class TestEdgeCases:
     """Test edge cases that could arise during integration."""
 
-    def test_modifiers_parsing_comma_separated(self):
-        """Modifiers stored as comma-separated string should parse correctly."""
+    def test_no_modifiers_column_on_claims_board(self):
+        """No modifiers column exists on Claims Board — always empty list."""
         from services.claim_builder_service import claims_board_item_to_normalized_orders
 
         item = {
@@ -706,21 +714,21 @@ class TestEdgeCases:
                 "id": "sub_1",
                 "name": "CGM Sensors",
                 "column_values": [
-                    {"id": "cb_sub_hcpc_code", "text": "A4239", "value": None},
-                    {"id": "cb_sub_claim_qty", "text": "6", "value": None},
-                    {"id": "cb_sub_units", "text": "3", "value": None},
-                    {"id": "cb_sub_modifiers", "text": "KS, NU", "value": None},
-                    {"id": "cb_sub_charge_amount", "text": "450.00", "value": None},
+                    {"id": "color_mm1cdvq8",   "text": "A4239", "value": None},   # HCPC Code (STATUS)
+                    {"id": "numeric_mm1czbyg",  "text": "6", "value": None},       # Order Qty
+                    {"id": "formula_mm1cv57q",  "text": "3", "value": None},       # Claim Qty (formula)
+                    {"id": "formula_mm1c7nen",  "text": "450.00", "value": None},  # Est. Pay (formula)
                 ],
             }],
         }
 
         orders = claims_board_item_to_normalized_orders(item)
         assert len(orders) == 1
-        assert orders[0]["pre_computed_modifiers"] == ["KS", "NU"]
+        # No modifiers column on Claims Board — always empty
+        assert orders[0]["pre_computed_modifiers"] == []
 
-    def test_empty_modifiers_string(self):
-        """Empty modifiers string should produce empty list."""
+    def test_formula_fields_used_for_units_and_charge(self):
+        """claim_qty (formula) should be used for units, est_pay for charge."""
         from services.claim_builder_service import claims_board_item_to_normalized_orders
 
         item = {
@@ -737,16 +745,17 @@ class TestEdgeCases:
                 "id": "sub_1",
                 "name": "Pump",
                 "column_values": [
-                    {"id": "cb_sub_hcpc_code", "text": "E0784", "value": None},
-                    {"id": "cb_sub_claim_qty", "text": "1", "value": None},
-                    {"id": "cb_sub_units", "text": "1", "value": None},
-                    {"id": "cb_sub_modifiers", "text": "", "value": None},
-                    {"id": "cb_sub_charge_amount", "text": "2500.00", "value": None},
+                    {"id": "color_mm1cdvq8",   "text": "E0784", "value": None},
+                    {"id": "numeric_mm1czbyg",  "text": "1", "value": None},        # Order Qty
+                    {"id": "formula_mm1cv57q",  "text": "1", "value": None},        # Claim Qty (formula)
+                    {"id": "formula_mm1c7nen",  "text": "2500.00", "value": None},  # Est. Pay (formula)
                 ],
             }],
         }
 
         orders = claims_board_item_to_normalized_orders(item)
+        assert orders[0]["pre_computed_units"] == "1"       # from claim_qty formula
+        assert orders[0]["pre_computed_charge"] == "2500.00"  # from est_pay formula
         assert orders[0]["pre_computed_modifiers"] == []
 
     def test_patient_name_with_no_payer_suffix(self):
@@ -767,11 +776,10 @@ class TestEdgeCases:
                 "id": "sub_1",
                 "name": "Test Product",
                 "column_values": [
-                    {"id": "cb_sub_hcpc_code", "text": "E0784", "value": None},
-                    {"id": "cb_sub_claim_qty", "text": "1", "value": None},
-                    {"id": "cb_sub_units", "text": "1", "value": None},
-                    {"id": "cb_sub_modifiers", "text": "", "value": None},
-                    {"id": "cb_sub_charge_amount", "text": "2500.00", "value": None},
+                    {"id": "color_mm1cdvq8",   "text": "E0784", "value": None},
+                    {"id": "numeric_mm1czbyg",  "text": "1", "value": None},
+                    {"id": "formula_mm1cv57q",  "text": "1", "value": None},
+                    {"id": "formula_mm1c7nen",  "text": "2500.00", "value": None},
                 ],
             }],
         }

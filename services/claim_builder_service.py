@@ -212,32 +212,34 @@ def monday_item_to_normalized_orders(monday_item: dict) -> list[dict]:
 
 # ── Claims Board column IDs ────────────────────────────────────────────────────
 # Parent columns on Claims Board that contain claim-level data
+# VERIFIED against live Monday board (2026-03-31)
 CLAIMS_BOARD_COLUMN_MAP = {
-    "text_mktat89m":    "member_id",
-    "text_mkp3y5ax":    "dob",
-    "text_mkxr2r9b":    "doctor_npi",
-    "text_mkxrh4a4":    "doctor_name",
-    "text_mkwzbcme":    "correlation_id",
-    "date_mkwr7spz":    "dos",
-    "date_mm14rk8d":    "claim_sent_date",
-    # Additional fields needed for Stedi submission
-    "cb_gender":            "gender",
-    "cb_patient_address":   "patient_address",
-    "cb_diagnosis_code":    "diagnosis_code",
-    "cb_cgm_coverage":      "cgm_coverage",
-    "cb_doctor_address":    "doctor_address",
-    "cb_doctor_phone":      "doctor_phone",
-    "cb_subscription_type": "subscription_type",
+    "text_mktat89m":     "member_id",
+    "text_mkp3y5ax":     "dob",
+    "text_mkxr2r9b":     "doctor_npi",
+    "text_mkxrh4a4":     "doctor_name",
+    "text_mkwzbcme":     "correlation_id",       # Customer Order / Stedi PCN
+    "text_mm1gkf40":     "raw_pcn",              # Raw Patient Control Number
+    "date_mkwr7spz":     "dos",
+    "date_mm14rk8d":     "claim_sent_date",
+    "color_mky2gpz5":    "diagnosis_code",        # Status type (ICD-10)
+    "location_mkxxpesw": "patient_address",        # Location type
+    "location_mkxr251b": "doctor_address",         # Location type
+    "color_mky1qvcf":    "subscription_type",      # Status type
+    "color_mkxmmm77":    "insurance_type",          # Status (Commercial/Medicaid/Medicare)
+    "color_mkxmywtb":    "primary_status",          # Primary claim status
+    # NOTE: No Gender, CGM Coverage, or Doctor Phone columns on Claims Board
 }
 
+# VERIFIED against live Monday board (2026-03-31)
 # Subitem columns on Claims Board (pre-computed product data)
 CLAIMS_BOARD_SUBITEM_MAP = {
-    "cb_sub_hcpc_code":     "hcpc_code",
-    "cb_sub_claim_qty":     "claim_qty",
-    "cb_sub_modifiers":     "modifiers",
-    "cb_sub_est_pay":       "est_pay",
-    "cb_sub_charge_amount": "charge_amount",
-    "cb_sub_units":         "units",
+    "color_mm1cdvq8":       "hcpc_code",         # HCPC Code (STATUS type — text returns code)
+    "numeric_mm1czbyg":     "order_qty",          # Order Quantity (writable number)
+    "formula_mm1cv57q":     "claim_qty",          # Claim Quantity (FORMULA — read only)
+    "formula_mm1c7nen":     "est_pay",            # Est. Pay (FORMULA — read only)
+    "color_mm1cjcmg":       "primary_insurance",  # Primary Insurance (status)
+    "color_mm1cnfsb":       "order_frequency",    # Order Frequency (status)
 }
 
 
@@ -299,7 +301,8 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
         sub_cols = extract_claims_board_subitem_columns(subitem.get("column_values", []))
 
         # Skip subitems with no HCPC code (product not ordered)
-        hcpc_code = sub_cols.get("hcpc_code", "")
+        # HCPC Code is a STATUS column — Monday returns the label text (e.g. "E0784")
+        hcpc_code = sub_cols.get("hcpc_code", "").strip()
         if not hcpc_code:
             continue
 
@@ -356,19 +359,20 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
 
         # Product info from subitem
         order["item"]     = subitem.get("name", "")
-        order["quantity"] = sub_cols.get("claim_qty", "")
+        # Use claim_qty (formula) if available, fall back to order_qty
+        order["quantity"] = sub_cols.get("claim_qty", "") or sub_cols.get("order_qty", "")
 
         # PRE-COMPUTED values — these bypass the resolver functions
+        # HCPC Code comes from status column (text contains the code like "E0784")
         order["pre_computed_hcpc"]      = hcpc_code
-        order["pre_computed_units"]     = sub_cols.get("units", "")
-        order["pre_computed_charge"]    = sub_cols.get("charge_amount", "")
+        # Units = claim_qty (formula result) or order_qty
+        order["pre_computed_units"]     = sub_cols.get("claim_qty", "") or sub_cols.get("order_qty", "")
+        # Charge = est_pay (formula result) — may be empty if formula not computed
+        order["pre_computed_charge"]    = sub_cols.get("est_pay", "")
 
-        # Parse modifiers (stored as comma-separated string)
-        modifiers_str = sub_cols.get("modifiers", "")
-        if modifiers_str:
-            order["pre_computed_modifiers"] = [m.strip() for m in modifiers_str.split(",") if m.strip()]
-        else:
-            order["pre_computed_modifiers"] = []
+        # NOTE: No modifiers column exists on Claims Board subitems.
+        # Modifiers will be computed by resolver functions as fallback.
+        order["pre_computed_modifiers"] = []
 
         logger.info(
             f"Claims Board normalized: {patient_full_name} | "

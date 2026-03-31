@@ -63,44 +63,39 @@ def get_new_order_board_id() -> str:
 # The New Order Board is FLAT (no subitems).
 # Product quantities and types are parent-level columns.
 
+# VERIFIED against live Monday board (2026-03-31)
+# New Order Board (18403054769) was duplicated from Order Board — shares column IDs.
+# It has subitems (same structure as Order Board), NOT flat.
 NEW_ORDER_BOARD_COLUMN_MAP = {
     # Patient info
-    "nob_patient_name":       "patient_name",        # Item name (from monday_item["name"])
-    "nob_gender":             "gender",
-    "nob_dob":                "dob",
-    "nob_phone":              "phone",
-    "nob_patient_address":    "patient_address",
-    "nob_diagnosis_code":     "diagnosis_code",
-    "nob_cgm_coverage":       "cgm_coverage",
+    "status":               "claim_status",
+    "color_mm1svmyk":       "gender",              # Status type (Male/Female)
+    "text_mm187t6a":        "dob",
+    "phone_mm18rr9v":       "phone",
+    "location_mm187v29":    "patient_address",
+    "color_mm189t0b":       "diagnosis_code",       # Status type
+    "color_mm18ds28":       "cgm_coverage",         # Status type (Hypo/Insulin)
 
     # Doctor info
-    "nob_doctor_name":        "doctor_name",
-    "nob_doctor_npi":         "doctor_npi",
-    "nob_doctor_address":     "doctor_address",
-    "nob_doctor_phone":       "doctor_phone",
+    "text_mm18w2y4":        "doctor_name",
+    "text_mm18x1kj":        "doctor_npi",
+    "location_mm18qfed":    "doctor_address",
+    "phone_mm18t5ct":       "doctor_phone",
 
     # Insurance
-    "nob_primary_insurance":  "primary_insurance",
-    "nob_member_id":          "member_id",
-    "nob_secondary_id":       "secondary_id",
-    "nob_subscription_type":  "subscription_type",
+    "color_mm18jhq5":       "primary_insurance",    # Status type
+    "text_mm18s3fe":        "member_id",
+    "color_mm18h6yn":       "pr_payor",
+    "text_mm18c6z4":        "secondary_id",
+    "color_mm18h05q":       "subscription_type",    # Status type
 
-    # Product quantities (flat — no subitems)
-    "nob_pump_qty":           "pump_qty",
-    "nob_infusion_set_qty":   "infusion_set_qty",
-    "nob_cartridge_qty":      "cartridge_qty",
-    "nob_cgm_sensor_qty":     "cgm_sensor_qty",
-    "nob_cgm_monitor_qty":    "cgm_monitor_qty",
-
-    # Product variants
-    "nob_pump_type":          "pump_type",
-    "nob_cgm_type":           "cgm_type",
-    "nob_infusion_set_type":  "infusion_set_type",
+    # 277 / Claim tracking
+    "color_mm1bx9az":       "status_277",
+    "text_mm1b56xa":        "rejection_reason_277",
+    "text_mm1ra2v1":        "claim_id",
 
     # Order metadata
-    "nob_order_date":         "order_date",
-    "nob_order_status":       "order_status",
-    "nob_auth_id":            "auth_id",
+    "date_mm1ssf5g":        "dos",                  # Date of Service
 }
 
 
@@ -109,41 +104,62 @@ NEW_ORDER_BOARD_COLUMN_MAP = {
 # ============================================================
 # These are the columns on the Claims Board parent item.
 
+# VERIFIED against live Monday board (2026-03-31)
+# Claims Board (18245429780)
 CLAIMS_BOARD_PARENT_COLUMN_MAP = {
-    # Patient
-    "text_mktat89m":   "member_id",
-    "text_mkp3y5ax":   "dob",
-    "text_mkxr2r9b":   "doctor_npi",
-    "text_mkxrh4a4":   "doctor_name",
-    "text_mkwzbcme":   "correlation_id",       # Stedi correlation ID / PCN
+    # Patient / Insurance
+    "text_mktat89m":    "member_id",
+    "text_mkp3y5ax":    "dob",
+    "color_mkxmhypt":   "primary_payor",        # Status type (18 payer labels)
+    "text_mm1gcz3y":    "pr_payor_id",
+    "color_mky2gpz5":   "diagnosis_code",        # Status type (ICD-10 codes)
+    "location_mkxxpesw":"patient_address",        # Location type
+    "color_mky1qvcf":   "subscription_type",      # Status type (CGM/Pump/Both)
+    "color_mkxmmm77":   "insurance_type",         # Status type (Commercial/Medicaid/Medicare)
 
-    # Additional patient/claim fields needed for Stedi submission
-    "cb_gender":           "gender",            # placeholder
-    "cb_patient_address":  "patient_address",   # placeholder
-    "cb_diagnosis_code":   "diagnosis_code",    # placeholder
-    "cb_cgm_coverage":     "cgm_coverage",      # placeholder
-    "cb_doctor_address":   "doctor_address",    # placeholder
-    "cb_doctor_phone":     "doctor_phone",      # placeholder
-    "cb_subscription_type":"subscription_type",  # placeholder
+    # Doctor
+    "text_mkxrh4a4":    "doctor_name",
+    "text_mkxr2r9b":    "doctor_npi",
+    "location_mkxr251b":"doctor_address",
+
+    # Correlation / tracking
+    "text_mkwzbcme":    "correlation_id",         # Customer Order (Stedi correlation ID / PCN)
+    "text_mm1gkf40":    "raw_pcn",                # Raw Patient Control Number
+    "text_mm1gefbz":    "raw_payer_claim_control", # Raw Payer Claim Control Number
 
     # Dates
-    "date_mkwr7spz":   "dos",                  # Date of Service
-    "date_mm14rk8d":   "claim_sent_date",
+    "date_mkwr7spz":    "dos",                    # Date of Service
+    "date_mm14rk8d":    "claim_sent_date",
 
     # ERA parent fields (populated by 835 handler)
-    "numeric_mm115q76": "primary_paid",         # Primary Paid (A)
-    "numeric_mkxmc2rh": "pr_amount",            # PR Amount (C)
-    "date_mm11zg2f":    "paid_date",            # Primary Paid Date
-    "text_mm11m3fh":    "check_number",         # Check #
-    "text_mkzck8tw":    "primary_status",       # Primary Status
-    "text_mm0fa4vk":    "raw_pcn",              # Raw Patient Control #
+    "numeric_mm115q76": "primary_paid",           # Primary Paid (A)
+    "numeric_mkxmc2rh": "pr_amount",              # PR Amount (C)
+    "date_mm11zg2f":    "paid_date",              # Primary Paid Date (D)
+    "text_mm11m3fh":    "check_number",           # Check #
+    "text_mkzck8tw":    "primary_status_text",    # Primary --> (text field)
+    "color_mkxmywtb":   "primary_status",         # Primary (status: Outstanding/Paid/Denied/etc.)
 
-    # 277 status fields (populated by 277 handler)
-    "cb_277_status":    "status_277",           # placeholder — needs real column ID
-    "cb_277_reason":    "rejection_reason_277",  # placeholder
+    # ERA amounts
+    "numeric_mm1ghydj": "raw_claim_charge_amount",
+    "text_mm1gz8ss":    "raw_remittance_trace",
+    "numeric_mm1gdpjq": "raw_remittance_total",
+
+    # Product unit columns (on parent)
+    "numeric_mkwz41cr": "e0784_units",            # Pump units
+    "numeric_mkwzb2f4": "e2103_units",            # Monitor units
+    "numeric_mkwz251j": "a4239_units",            # Sensor units
+    "numeric_mkwz4zkt": "pump_qty",
+    "numeric_mkwz337y": "infusion_1_qty",
+    "numeric_mkwz9g9f": "infusion_2_qty",
+    "numeric_mkwzr5js": "monitor_qty",
 
     # Workflow / claim status
-    "cb_claim_status":  "claim_status",         # placeholder — needs real column ID
+    "color_mm11nnfy":   "primary_era_status",     # Primary ERA --> (Working on it/Primary ERA)
+    "color_mm1j794n":   "workflow",               # Workflow --> section header
+
+    # NOTE: No dedicated 277 Status column exists on Claims Board.
+    # 277 status is tracked via primary_status (color_mkxmywtb).
+    # No Gender column, No CGM Coverage column, No Doctor Phone column.
 }
 
 # Reverse map: semantic name → column ID for writing
@@ -155,38 +171,65 @@ CLAIMS_BOARD_PARENT_WRITE_MAP = {v: k for k, v in CLAIMS_BOARD_PARENT_COLUMN_MAP
 # ============================================================
 # These columns exist on each of the 5 pre-populated product subitems.
 
+# VERIFIED against live Monday board (2026-03-31)
+# Claims Board Subitems (board 18245429979)
+# NOTE: HCPC Code is a STATUS column (dropdown), not text.
+#       Claim Quantity and Est. Pay are FORMULAS (read-only).
+#       No Modifiers column exists on the board.
 CLAIMS_BOARD_SUBITEM_COLUMN_MAP = {
-    # Pre-computed claim fields (populated during order → claims migration)
-    "cb_sub_hcpc_code":       "hcpc_code",
-    "cb_sub_claim_qty":       "claim_qty",
-    "cb_sub_modifiers":       "modifiers",
-    "cb_sub_est_pay":         "est_pay",
-    "cb_sub_charge_amount":   "charge_amount",
-    "cb_sub_units":           "units",
+    # Pre-populated product fields
+    "color_mm1cdvq8":         "hcpc_code",          # HCPC Code (STATUS type — see HCPC_STATUS_INDEX)
+    "numeric_mm1czbyg":       "order_qty",           # Order Quantity (writable)
+    "formula_mm1cv57q":       "claim_qty",           # Claim Quantity (FORMULA — read only!)
+    "formula_mm1c7nen":       "est_pay",             # Est. Pay (FORMULA — read only!)
+    "color_mm1cjcmg":         "primary_insurance",   # Primary Insurance (status)
+    "color_mm1cnfsb":         "order_frequency",     # Order Frequency (status)
+    "color_mm1148h5":         "primary_status",      # Primary (status: Outstanding/Paid/Denied/Underpaid)
 
-    # ERA fields (populated by 835 handler — UPDATE, not create)
-    "numeric_mm1czbyg":       "era_primary_paid",
-    "date_mm11hscn":          "era_service_date",
-    "numeric_mm11v6th":       "era_charge_amount",
-    "text_mm16qhea":          "era_patient_control_num",
-    "text_mm1gzsan":          "era_claim_status_code",
-    "text_mm1g4yd9":          "era_line_control_num",
-    "numeric_mm1gg3pj":       "era_allowed_actual",
-    "numeric_mm1gtdts":       "era_pr_amount",
-    "numeric_mm1gredn":       "era_deductible",
-    "numeric_mm1g3nvh":       "era_coinsurance",
-    "numeric_mm11aqr1":       "era_copay",
-    "numeric_mm1gtd3e":       "era_other_pr",
-    "numeric_mm1g48c":        "era_co_amount",
-    "numeric_mm1gken":        "era_co_45",
-    "numeric_mm1gt3ky":       "era_co_253",
-    "numeric_mm1g3vgp":       "era_other_co",
-    "numeric_mm1grbc3":       "era_oa_amount",
-    "numeric_mm1gh22d":       "era_pi_amount",
-    "text_mm1g6tw3":          "era_remark_codes",
-    "long_text_mm1ggyz6":     "era_remark_text",
-    "text_mm1gt1dh":          "era_adj_codes",
-    "long_text_mm1g7xmy":     "era_adj_reasons",
+    # ERA fields (populated by 835 handler — UPDATE existing subitems)
+    "numeric_mm11v6th":       "era_primary_paid",     # Primary Paid
+    "text_mm1ge9yn":          "era_service_date",     # Raw Service Date
+    "numeric_mm1gg3pj":       "era_charge_amount",    # Raw Line Item Charge Amount
+    "text_mm1gzsan":          "era_patient_control",  # Patient Control #
+    "text_mm1g4yd9":          "era_claim_status_code",# Claim Status Code
+    "text_mm1gat8c":          "era_line_control",     # Raw Line Item Control Number
+    "numeric_mm1gtdts":       "era_allowed_actual",   # Raw Allowed Actual
+    "numeric_mm1gredn":       "era_pr_amount",        # Parsed PR Amount
+    "numeric_mm1g3nvh":       "era_deductible",       # Parsed Deductible Amount
+    "numeric_mm11aqr1":       "era_coinsurance",      # Parsed Coinsurance Amount
+    "numeric_mm1gtd3e":       "era_copay",            # Parsed Copay Amount
+    "numeric_mm1g48c":        "era_other_pr",         # Parsed Other PR Amount
+    "numeric_mm1gken":        "era_co_amount",        # Parsed CO Amount
+    "numeric_mm1gt3ky":       "era_co_45",            # Parsed CO-45 Amount
+    "numeric_mm1g3vgp":       "era_co_253",           # Parsed CO-253 Amount
+    "numeric_mm1grbc3":       "era_other_co",         # Parsed Other CO Amount
+    "numeric_mm1gh22d":       "era_oa_amount",        # Parsed OA Amount
+    "numeric_mm1gqkvz":       "era_pi_amount",        # Parsed PI Amount
+    "text_mm1g6tw3":          "era_remark_codes",     # Parsed Remark Codes
+    "long_text_mm1ggyz6":     "era_remark_text",      # Parsed Remark Text
+    "text_mm1gt1dh":          "era_adj_codes",        # Parsed Adjustment Codes
+    "long_text_mm1g7xmy":     "era_adj_reasons",      # Parsed Adjustment Reasons
+}
+
+# HCPC Code status column label indexes
+# Used to SET hcpc_code via status index (not text)
+HCPC_STATUS_INDEX = {
+    "E0784": "0",   # Insulin Pump
+    "A4224": "1",   # Infusion Set (payer-dependent)
+    "A4225": "2",   # Cartridge (payer-dependent)
+    "E2103": "3",   # CGM Monitor
+    "A4239": "4",   # CGM Sensors
+    "A4232": "6",   # Cartridge (payer-dependent)
+    "A4230": "7",   # Infusion Set (payer-dependent)
+    "A4231": "8",   # Infusion Set (payer-dependent)
+}
+
+# Claims Board subitem Primary status indexes
+SUBITEM_PRIMARY_STATUS_INDEX = {
+    "Outstanding":  "0",
+    "Paid":         "1",
+    "Denied":       "2",
+    "Underpaid":    "3",
 }
 
 # Reverse map: semantic name → column ID for writing
