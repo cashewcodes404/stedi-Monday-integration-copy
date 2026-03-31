@@ -271,6 +271,37 @@ async def handle_populate_event(body: dict):
             logger.warning(f"[Populate] No products with qty > 0 for item {item_id}")
             return
 
+        # Step 4b: Enrich each product with subitem-specific fields
+        # The Monday formulas for Claim Qty and Est. Pay depend on
+        # Primary Insurance and Order Frequency being set on each subitem.
+        from claims_board_config import resolve_subitem_insurance_label
+
+        parent_payor = cols.get("primary_payor", "")
+        insurance_type = cols.get("insurance_type", "")
+        insurance_label = resolve_subitem_insurance_label(parent_payor, insurance_type)
+
+        # Determine order frequency from parent (Frequency status column)
+        # The parent has both a status Frequency (color_mky4mb3y) and numeric Frequency (numeric_mm15t7ed)
+        # We read the status column text which is "60-Day" / "90-Day" / "30-Day"
+        frequency_text = cols.get("frequency", "")
+        # Normalize: parent uses "60-Day" but subitems use "60-Days"
+        order_frequency = ""
+        if "90" in frequency_text:
+            order_frequency = "90-Days"
+        elif "60" in frequency_text:
+            order_frequency = "60-Days"
+        elif "30" in frequency_text:
+            order_frequency = "60-Days"  # Closest match; 30-day not on subitems
+
+        for product in product_subitems:
+            product["subitem_insurance_label"] = insurance_label
+            product["order_frequency"] = order_frequency
+
+        logger.info(
+            f"[Populate] Enriched {len(product_subitems)} products: "
+            f"insurance={insurance_label}, frequency={order_frequency}"
+        )
+
         # Step 5: Write computed values back to Claims Board subitems
         from services.monday_service import populate_claims_board_subitems
         populate_claims_board_subitems(item_id, product_subitems)

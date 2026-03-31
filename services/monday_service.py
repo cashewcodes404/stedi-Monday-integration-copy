@@ -1154,8 +1154,23 @@ def _write_computed_fields_to_subitem(
     product: dict,
     update_mutation: str,
 ) -> None:
-    """Write HCPC code, order quantity, and other computed fields to a subitem."""
-    from claims_board_config import HCPC_STATUS_INDEX
+    """
+    Write HCPC code, order quantity, primary insurance, order frequency,
+    and modifiers to a Claims Board subitem.
+
+    The Monday formulas for Claim Quantity and Est. Pay depend on:
+      - HCPC Code (color_mm1cdvq8)
+      - Primary Insurance (color_mm1cjcmg) — CRITICAL for rate calculation
+      - Order Frequency (color_mm1cnfsb) — CRITICAL for A4239 Claim Qty
+      - Order Quantity (numeric_mm1czbyg)
+
+    Without Primary Insurance and Order Frequency, the formulas return blank.
+    """
+    from claims_board_config import (
+        HCPC_STATUS_INDEX,
+        SUBITEM_PRIMARY_INSURANCE_INDEX,
+        SUBITEM_ORDER_FREQUENCY_INDEX,
+    )
 
     product_name = product.get("product_name", "Unknown")
 
@@ -1177,6 +1192,45 @@ def _write_computed_fields_to_subitem(
         else:
             logger.warning(f"  Subitem {product_name}: unknown HCPC code '{hcpc_code}' — not in HCPC_STATUS_INDEX")
 
+    # ── Primary Insurance: STATUS column — needed for Est. Pay formula ──
+    insurance_label = product.get("subitem_insurance_label", "")
+    if insurance_label:
+        # Check if we have a known index; otherwise use {"label": "text"} to auto-create
+        known_index = SUBITEM_PRIMARY_INSURANCE_INDEX.get(insurance_label)
+        if known_index is not None:
+            value_json = '{"index": ' + known_index + '}'
+        else:
+            # Auto-create label on Monday — the formula will match by label text
+            import json as _json
+            value_json = _json.dumps({"label": insurance_label})
+
+        try:
+            run_query(update_mutation, {
+                "itemId":   str(subitem_id),
+                "boardId":  str(subitem_board_id),
+                "columnId": "color_mm1cjcmg",  # Primary Insurance (STATUS)
+                "value":    value_json,
+            })
+            logger.info(f"  Subitem {product_name}: set primary_insurance = {insurance_label}")
+        except Exception as e:
+            logger.warning(f"  Subitem {product_name}: failed primary_insurance: {e}")
+
+    # ── Order Frequency: STATUS column — needed for A4239 Claim Qty formula ──
+    order_frequency = product.get("order_frequency", "")
+    if order_frequency:
+        freq_index = SUBITEM_ORDER_FREQUENCY_INDEX.get(order_frequency)
+        if freq_index is not None:
+            try:
+                run_query(update_mutation, {
+                    "itemId":   str(subitem_id),
+                    "boardId":  str(subitem_board_id),
+                    "columnId": "color_mm1cnfsb",  # Order Frequency (STATUS)
+                    "value":    '{"index": ' + freq_index + '}',
+                })
+                logger.info(f"  Subitem {product_name}: set order_frequency = {order_frequency}")
+            except Exception as e:
+                logger.warning(f"  Subitem {product_name}: failed order_frequency: {e}")
+
     # ── Order Quantity: writable numeric column ──
     order_qty = product.get("claim_qty", "") or product.get("units", "")
     if order_qty:
@@ -1191,11 +1245,26 @@ def _write_computed_fields_to_subitem(
         except Exception as e:
             logger.warning(f"  Subitem {product_name}: failed order_qty: {e}")
 
+    # ── Modifiers: DROPDOWN column ──
+    modifiers = product.get("modifiers", [])
+    if modifiers:
+        import json as _json
+        # Monday dropdown expects {"labels": ["mod1", "mod2"]}
+        try:
+            run_query(update_mutation, {
+                "itemId":   str(subitem_id),
+                "boardId":  str(subitem_board_id),
+                "columnId": "dropdown_mm1z7je9",  # Modifiers (DROPDOWN)
+                "value":    _json.dumps({"labels": modifiers}),
+            })
+            logger.info(f"  Subitem {product_name}: set modifiers = {modifiers}")
+        except Exception as e:
+            logger.warning(f"  Subitem {product_name}: failed modifiers: {e}")
+
     # NOTE: claim_qty (formula_mm1cv57q) and est_pay (formula_mm1c7nen)
     # are FORMULA columns — read-only, cannot be written via API.
-    # They compute automatically from order_qty and other board formulas.
-
-    # NOTE: No modifiers column exists on Claims Board subitems.
+    # They compute automatically from HCPC Code + Primary Insurance +
+    # Order Frequency + Order Quantity.
 
 
 # ============================================================

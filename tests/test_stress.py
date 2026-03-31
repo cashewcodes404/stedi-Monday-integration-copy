@@ -862,3 +862,108 @@ class TestFinalRegressionChecks:
                 for p in placeholders:
                     assert p not in content, \
                         f"Placeholder {p} found as column ID in {filepath}"
+
+
+class TestSubitemInsuranceAndFrequency:
+    """Tests for the critical Primary Insurance + Order Frequency subitem writes."""
+
+    def test_resolve_subitem_insurance_label_known_combo(self):
+        """Known payer+type combos should resolve to exact formula-matching labels."""
+        from claims_board_config import resolve_subitem_insurance_label
+        assert resolve_subitem_insurance_label("Anthem BCBS", "Commercial") == "Anthem BCBS Commercial"
+        assert resolve_subitem_insurance_label("Anthem BCBS", "Medicare") == "Anthem BCBS Medicare"
+        assert resolve_subitem_insurance_label("Medicare A & B", "Medicare") == "Medicare A & B"
+        assert resolve_subitem_insurance_label("Aetna", "Commercial") == "Aetna Commercial"
+        assert resolve_subitem_insurance_label("United Healthcare", "Commercial") == "United Commercial"
+        assert resolve_subitem_insurance_label("United Healthcare", "Medicaid") == "United Medicaid"
+        assert resolve_subitem_insurance_label("Fidelis", "Medicaid") == "Fidelis Medicaid"
+        assert resolve_subitem_insurance_label("Cigna", "Medicare") == "Cigna Medicare"
+
+    def test_resolve_subitem_insurance_label_standalone(self):
+        """Payers without an insurance type (standalone) should resolve correctly."""
+        from claims_board_config import resolve_subitem_insurance_label
+        assert resolve_subitem_insurance_label("Humana", "") == "Humana"
+        assert resolve_subitem_insurance_label("Wellcare", "") == "Wellcare"
+        assert resolve_subitem_insurance_label("NYSHIP Empire", "") == "NYSHIP Empire"
+        assert resolve_subitem_insurance_label("Medicaid", "") == "Medicaid"
+
+    def test_resolve_subitem_insurance_label_fallback(self):
+        """Unknown combos should fallback to 'Payer Type' format."""
+        from claims_board_config import resolve_subitem_insurance_label
+        result = resolve_subitem_insurance_label("NewPayer", "Commercial")
+        assert result == "NewPayer Commercial"
+        result2 = resolve_subitem_insurance_label("SomePayer", "")
+        assert result2 == "SomePayer"
+
+    def test_subitem_insurance_index_has_known_labels(self):
+        """The index map should cover the labels that already exist on the board."""
+        from claims_board_config import SUBITEM_PRIMARY_INSURANCE_INDEX
+        assert "Medicare A & B" in SUBITEM_PRIMARY_INSURANCE_INDEX
+        assert "Anthem BCBS Commercial" in SUBITEM_PRIMARY_INSURANCE_INDEX
+        assert "Aetna Commercial" in SUBITEM_PRIMARY_INSURANCE_INDEX
+        assert "Humana" in SUBITEM_PRIMARY_INSURANCE_INDEX
+
+    def test_subitem_order_frequency_index(self):
+        """Order frequency index should have both valid frequencies."""
+        from claims_board_config import SUBITEM_ORDER_FREQUENCY_INDEX
+        assert "60-Days" in SUBITEM_ORDER_FREQUENCY_INDEX
+        assert "90-Days" in SUBITEM_ORDER_FREQUENCY_INDEX
+
+    def test_write_computed_fields_includes_insurance(self):
+        """_write_computed_fields_to_subitem must write primary_insurance."""
+        import inspect
+        from services.monday_service import _write_computed_fields_to_subitem
+        source = inspect.getsource(_write_computed_fields_to_subitem)
+        assert "color_mm1cjcmg" in source, "Must write Primary Insurance column"
+        assert "subitem_insurance_label" in source, "Must read subitem_insurance_label from product"
+
+    def test_write_computed_fields_includes_frequency(self):
+        """_write_computed_fields_to_subitem must write order_frequency."""
+        import inspect
+        from services.monday_service import _write_computed_fields_to_subitem
+        source = inspect.getsource(_write_computed_fields_to_subitem)
+        assert "color_mm1cnfsb" in source, "Must write Order Frequency column"
+        assert "order_frequency" in source, "Must read order_frequency from product"
+
+    def test_write_computed_fields_includes_modifiers(self):
+        """_write_computed_fields_to_subitem must write modifiers dropdown."""
+        import inspect
+        from services.monday_service import _write_computed_fields_to_subitem
+        source = inspect.getsource(_write_computed_fields_to_subitem)
+        assert "dropdown_mm1z7je9" in source, "Must write Modifiers column"
+
+    def test_populate_event_enriches_products(self):
+        """handle_populate_event must add subitem_insurance_label and order_frequency."""
+        import inspect
+        from routes.monday_webhook import handle_populate_event
+        source = inspect.getsource(handle_populate_event)
+        assert "subitem_insurance_label" in source
+        assert "order_frequency" in source
+        assert "resolve_subitem_insurance_label" in source
+
+    def test_frequency_column_in_parent_map(self):
+        """Parent column map must include the Frequency status column."""
+        from claims_board_config import CLAIMS_BOARD_PARENT_COLUMN_MAP
+        assert "color_mky4mb3y" in CLAIMS_BOARD_PARENT_COLUMN_MAP
+        assert CLAIMS_BOARD_PARENT_COLUMN_MAP["color_mky4mb3y"] == "frequency"
+
+    def test_modifiers_column_in_subitem_map(self):
+        """Subitem column map must include the Modifiers dropdown."""
+        from claims_board_config import CLAIMS_BOARD_SUBITEM_COLUMN_MAP
+        assert "dropdown_mm1z7je9" in CLAIMS_BOARD_SUBITEM_COLUMN_MAP
+        assert CLAIMS_BOARD_SUBITEM_COLUMN_MAP["dropdown_mm1z7je9"] == "modifiers"
+
+    def test_parent_payor_to_subitem_map_covers_all_board_payers(self):
+        """The mapping should cover every payer label on the parent board."""
+        from claims_board_config import PARENT_PAYOR_TO_SUBITEM_INSURANCE
+        # These are all the payer labels from color_mkxmhypt on Claims Board
+        board_payers = [
+            "Anthem BCBS", "Aetna", "Fidelis", "Medicare A & B",
+            "Cigna", "Humana", "United Healthcare", "Medicaid",
+            "NYSHIP Empire", "Wellcare", "BCBS Wyoming", "MagnaCare",
+            "Midlands Choice", "UMR", "1199", "Horizon BCBS",
+        ]
+        all_payer_keys = [k[0] for k in PARENT_PAYOR_TO_SUBITEM_INSURANCE.keys()]
+        for payer in board_payers:
+            assert payer in all_payer_keys, \
+                f"Board payer '{payer}' not in PARENT_PAYOR_TO_SUBITEM_INSURANCE"

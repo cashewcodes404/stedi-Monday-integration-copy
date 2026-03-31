@@ -152,6 +152,9 @@ CLAIMS_BOARD_PARENT_COLUMN_MAP = {
     "numeric_mkwz9g9f": "infusion_2_qty",
     "numeric_mkwzr5js": "monitor_qty",
 
+    # Order metadata
+    "color_mky4mb3y":   "frequency",              # Frequency (status: 60-Day/90-Day/30-Day)
+
     # Workflow / claim status
     "color_mm11nnfy":   "primary_era_status",     # Primary ERA --> (Working on it/Primary ERA)
     "color_mm1j794n":   "workflow",               # Workflow --> section header
@@ -183,6 +186,7 @@ CLAIMS_BOARD_SUBITEM_COLUMN_MAP = {
     "formula_mm1c7nen":       "est_pay",             # Est. Pay (FORMULA — read only!)
     "color_mm1cjcmg":         "primary_insurance",   # Primary Insurance (status)
     "color_mm1cnfsb":         "order_frequency",     # Order Frequency (status)
+    "dropdown_mm1z7je9":      "modifiers",           # Modifiers (dropdown)
     "color_mm1148h5":         "primary_status",      # Primary (status: Outstanding/Paid/Denied/Underpaid)
 
     # ERA fields (populated by 835 handler — UPDATE existing subitems)
@@ -230,6 +234,95 @@ SUBITEM_PRIMARY_STATUS_INDEX = {
     "Denied":       "2",
     "Underpaid":    "3",
 }
+
+# Subitem Order Frequency status indexes
+SUBITEM_ORDER_FREQUENCY_INDEX = {
+    "60-Days": "0",
+    "90-Days": "1",
+}
+
+# ── Subitem Primary Insurance label mapping ──
+# The subitem "Primary Insurance" (color_mm1cjcmg) uses combined payer+type labels
+# that match the Est. Pay / Claim Quantity formulas.
+# Known indexes (already on the board):
+SUBITEM_PRIMARY_INSURANCE_INDEX = {
+    "Medicare A & B":             "0",
+    "Cigna Commercial":           "1",
+    "Fidelis CHP":                "2",
+    "Anthem BCBS Commercial":     "3",
+    "Humana":                     "4",
+    "Aetna Commercial":           "6",
+}
+
+# Full mapping: (parent_payor, insurance_type) → subitem label text.
+# If a combo isn't in SUBITEM_PRIMARY_INSURANCE_INDEX, we'll use
+# {"label": "<text>"} format which auto-creates the label on Monday.
+# The label text MUST match what the Est. Pay formula references in its SWITCH.
+PARENT_PAYOR_TO_SUBITEM_INSURANCE = {
+    # Anthem BCBS
+    ("Anthem BCBS", "Commercial"):  "Anthem BCBS Commercial",
+    ("Anthem BCBS", "Medicare"):    "Anthem BCBS Medicare",
+    ("Anthem BCBS", "Medicaid"):    "Anthem BCBS Medicaid",
+    # Fidelis
+    ("Fidelis", "Commercial"):      "Fidelis Commercial",
+    ("Fidelis", "Medicaid"):        "Fidelis Medicaid",
+    ("Fidelis", "CHP"):             "Fidelis CHP",
+    # Cigna
+    ("Cigna", "Commercial"):        "Cigna Commercial",
+    ("Cigna", "Medicare"):          "Cigna Medicare",
+    # Aetna
+    ("Aetna", "Commercial"):        "Aetna Commercial",
+    ("Aetna", "Medicare"):          "Aetna Medicare",
+    # United Healthcare
+    ("United Healthcare", "Commercial"): "United Commercial",
+    ("United Healthcare", "Medicare"):   "United Medicare",
+    ("United Healthcare", "Medicaid"):   "United Medicaid",
+    # Medicare A & B (standalone — no insurance type needed)
+    ("Medicare A & B", ""):          "Medicare A & B",
+    ("Medicare A & B", "Medicare"):  "Medicare A & B",
+    # Others (insurance_type usually empty for these)
+    ("Wellcare", ""):               "Wellcare",
+    ("Humana", ""):                 "Humana",
+    ("Humana", "Medicare"):         "Humana",
+    ("health first", ""):           "health first",
+    ("NYSHIP Empire", ""):          "NYSHIP Empire",
+    ("NYSHIP Empire", "Commercial"):"NYSHIP Empire",
+    ("Medicaid", ""):               "Medicaid",
+    ("Medicaid", "Medicaid"):       "Medicaid",
+    ("BCBS Wyoming", ""):           "BCBS Wyoming",
+    ("MagnaCare", ""):              "MagnaCare",
+    ("Midlands Choice", ""):        "Midlands Choice",
+    ("UMR", ""):                    "UMR",
+    ("1199", ""):                   "1199",
+    ("BCBS NJ (Horizon)", ""):      "Horizon BCBS",
+    ("Horizon BCBS", ""):           "Horizon BCBS",
+    ("MetroPlus", ""):              "MetroPlus",
+}
+
+
+def resolve_subitem_insurance_label(parent_payor: str, insurance_type: str) -> str:
+    """
+    Given the parent Claims Board's Primary Payor + Insurance Type,
+    return the subitem Primary Insurance label text that matches the
+    Est. Pay formula's SWITCH statement.
+
+    Falls back to combining payer + type if no explicit mapping exists.
+    """
+    # Try exact match
+    label = PARENT_PAYOR_TO_SUBITEM_INSURANCE.get((parent_payor, insurance_type))
+    if label:
+        return label
+
+    # Try with empty insurance type (for standalone payers like Medicare A & B)
+    label = PARENT_PAYOR_TO_SUBITEM_INSURANCE.get((parent_payor, ""))
+    if label:
+        return label
+
+    # Fallback: combine payer + type (e.g., "MetroPlus Commercial")
+    if insurance_type:
+        return f"{parent_payor} {insurance_type}"
+    return parent_payor
+
 
 # Reverse map: semantic name → column ID for writing
 CLAIMS_BOARD_SUBITEM_WRITE_MAP = {v: k for k, v in CLAIMS_BOARD_SUBITEM_COLUMN_MAP.items()}
