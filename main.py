@@ -271,15 +271,18 @@ async def get_claims_subitem_columns():
 async def list_webhooks(board_id: str):
     """List all webhooks on a board."""
     from services.monday_service import run_query
-    query = """
-    query ($boardId: ID!) {
-      boards(ids: [$boardId]) {
-        webhooks { id event board_id config }
-      }
-    }
-    """
-    result = run_query(query, {"boardId": board_id})
-    return result
+    try:
+        query = """
+        query ($boardId: ID!) {
+          boards(ids: [$boardId]) {
+            webhooks { id event config }
+          }
+        }
+        """
+        result = run_query(query, {"boardId": board_id})
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/debug/create-webhook", tags=["Debug"])
