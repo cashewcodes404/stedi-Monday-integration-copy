@@ -881,10 +881,40 @@ async def test_payer_lookup(name: str):
     return {"internal": name, "official": result}
 
 
+def _extract_status_label(event: dict) -> str:
+    """
+    Extract the status label text from a Monday webhook event.
+
+    Monday sends the 'value' field in TWO possible formats:
+      1. Nested dict:   {"label": {"index": 2, "text": "Send to STEDI"}}
+      2. JSON string:   "{\"label\":{\"index\":2,\"text\":\"Send to STEDI\"}}"
+
+    This helper handles both.
+    """
+    import json as _json
+    raw_value = event.get("value", {})
+    if isinstance(raw_value, str):
+        try:
+            raw_value = _json.loads(raw_value)
+        except (ValueError, TypeError):
+            return ""
+    if not isinstance(raw_value, dict):
+        return ""
+    label = raw_value.get("label", {})
+    if isinstance(label, str):
+        try:
+            label = _json.loads(label)
+        except (ValueError, TypeError):
+            return label  # plain string label
+    if isinstance(label, dict):
+        return label.get("text", "")
+    return str(label) if label else ""
+
+
 async def handle_event(body: dict):
     event = body.get("event", {})
     item_id = str(event.get("pulseId") or event.get("itemId") or "")
-    new_label = event.get("value", {}).get("label", {}).get("text", "")
+    new_label = _extract_status_label(event)
 
     logger.info(f"Status: '{new_label}' | item: {item_id}")
 
