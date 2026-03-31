@@ -277,8 +277,8 @@ async def debug_item(item_id: str):
           items(ids: [$itemId]) {
             id name
             board { id name }
-            column_values { id title type text value }
-            subitems { id name column_values { id title type text } }
+            column_values { id type text value }
+            subitems { id name column_values { id type text } }
           }
         }
         """
