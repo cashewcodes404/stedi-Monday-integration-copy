@@ -312,6 +312,11 @@ async def handle_process_order_event(body: dict):
         order_cols["cgm_monitor_qty"] = cols.get("cgm_monitor_qty", "")
         order_cols["cartridge_qty"]   = cols.get("cartridge_qty", "")
 
+        # Variant fields — needed for unit count calculations (e.g. CGM divisor)
+        order_cols["cgm_type"]           = cols.get("cgm_type", "")
+        order_cols["pump_type"]          = cols.get("pump_type", "")
+        order_cols["infusion_set_type"]  = cols.get("infusion_set_1_type", "")
+
         # Infusion: combine inf_1 + inf_2
         try:
             inf1 = int(float(cols.get("infusion_1_qty", "0") or "0"))
