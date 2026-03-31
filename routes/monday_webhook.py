@@ -395,10 +395,20 @@ async def handle_process_order_event(body: dict):
         if payer_name:
             parent_values["color_mkxmhypt"] = {"label": payer_name}
 
-        # Secondary Insurance
-        secondary = cols.get("secondary_insurance", "")
-        if secondary:
-            parent_values["color_mkxmmm77"] = {"label": secondary}
+        # Insurance Type — derive from the combined payer name
+        # e.g. "Anthem BCBS Commercial" → "Commercial",
+        #      "Fidelis Medicaid" → "Medicaid",
+        #      "Aetna Medicare" → "Medicare"
+        insurance_type = ""
+        payer_lower = payer_name.lower()
+        if "commercial" in payer_lower:
+            insurance_type = "Commercial"
+        elif "medicaid" in payer_lower:
+            insurance_type = "Medicaid"
+        elif "medicare" in payer_lower:
+            insurance_type = "Medicare"
+        if insurance_type:
+            parent_values["color_mkxmmm77"] = {"label": insurance_type}
 
         # Frequency (status column)
         if frequency_text:
@@ -507,17 +517,11 @@ async def handle_process_order_event(body: dict):
         except Exception as e:
             logger.warning(f"[ProcessOrder] Failed to update Order Board status: {e}")
 
-        # ── Step 8: Store Claims Board item ID back on Order Board ──
-        try:
-            run_query(update_mutation, {
-                "itemId": str(item_id),
-                "boardId": str(order_board_id),
-                "columnId": "text_mm1g99yk",  # Stedi Claim ID column (repurposed)
-                "value": f'"{claims_item_id}"',
-            })
-            logger.info(f"[ProcessOrder] Stored Claims Board ID {claims_item_id} on Order Board")
-        except Exception as e:
-            logger.warning(f"[ProcessOrder] Failed to store Claims Board ID: {e}")
+        # ── Step 8: Store Claims Board item ID back on New Order Board ──
+        # NOTE: text_mm1g99yk doesn't exist on the New Order Board yet.
+        # Skipping for now — can be added when a "Claims ID" text column
+        # is created on the New Order Board.
+        logger.info(f"[ProcessOrder] Claims Board ID={claims_item_id} (no link-back column on New Order Board yet)")
 
         logger.info(
             f"[ProcessOrder] ✅ Complete: Order {item_id} → Claims Board {claims_item_id} "
