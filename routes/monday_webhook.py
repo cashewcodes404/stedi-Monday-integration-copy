@@ -233,10 +233,18 @@ async def handle_process_order_event(body: dict):
 
         # Parse columns using Order Board map
         cols = {}
+        raw_values = {}  # Store raw JSON values for location columns etc.
         for cv in order_item.get("column_values", []):
             col_id = cv.get("id", "")
             field_name = ORDER_BOARD_COLUMN_MAP.get(col_id, col_id)
             cols[field_name] = cv.get("text", "") or ""
+            # Parse raw value for structured columns (location, etc.)
+            raw_val = cv.get("value", "")
+            if raw_val and isinstance(raw_val, str):
+                try:
+                    raw_values[field_name] = _json.loads(raw_val)
+                except Exception:
+                    raw_values[field_name] = raw_val
 
         patient_name = order_item.get("name", "")
         patient_first, patient_last = split_full_name(patient_name)
@@ -380,7 +388,12 @@ async def handle_process_order_event(body: dict):
 
         # DOS (date column needs {"date": "YYYY-MM-DD"})
         if dos:
-            parent_values["date_mkwr7spz"] = {"date": normalize_date(dos)}
+            raw_date = normalize_date(dos)  # returns YYYYMMDD
+            if len(raw_date) == 8:
+                formatted_date = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:8]}"
+            else:
+                formatted_date = dos  # fallback to original
+            parent_values["date_mkwr7spz"] = {"date": formatted_date}
 
         # Primary Payor (status column — use label text)
         if parent_payor:
@@ -404,18 +417,22 @@ async def handle_process_order_event(body: dict):
         if dx:
             parent_values["color_mky2gpz5"] = {"label": dx}
 
-        # Patient Address (location column)
-        if cols.get("patient_address"):
+        # Patient Address (location column — needs lat/lng)
+        pat_loc = raw_values.get("patient_address", {})
+        if isinstance(pat_loc, dict) and pat_loc.get("lat") and pat_loc.get("lng"):
             parent_values["location_mkxxpesw"] = {
-                "lat": "", "lng": "",
-                "address": cols["patient_address"],
+                "lat": str(pat_loc["lat"]),
+                "lng": str(pat_loc["lng"]),
+                "address": pat_loc.get("address", cols.get("patient_address", "")),
             }
 
-        # Doctor Address (location column)
-        if cols.get("doctor_address"):
+        # Doctor Address (location column — needs lat/lng)
+        doc_loc = raw_values.get("doctor_address", {})
+        if isinstance(doc_loc, dict) and doc_loc.get("lat") and doc_loc.get("lng"):
             parent_values["location_mkxr251b"] = {
-                "lat": "", "lng": "",
-                "address": cols["doctor_address"],
+                "lat": str(doc_loc["lat"]),
+                "lng": str(doc_loc["lng"]),
+                "address": doc_loc.get("address", cols.get("doctor_address", "")),
             }
 
         # Product quantities on parent
