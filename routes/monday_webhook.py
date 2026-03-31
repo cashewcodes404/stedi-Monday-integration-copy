@@ -362,7 +362,12 @@ async def handle_process_order_event(body: dict):
         """
 
         # Map New Order Board data → Claims Board parent columns
+        # Split into "safe" values (text/numeric/date — never fail) and
+        # "status" values (label-based — can fail if label doesn't exist).
+        # Status columns are written separately AFTER item creation so a
+        # missing label doesn't block the entire item.
         parent_values = {}
+        status_columns = {}  # column_id → {"label": "..."} — written post-create
 
         # DOB
         if cols.get("dob"):
@@ -391,14 +396,11 @@ async def handle_process_order_event(body: dict):
                 formatted_date = dos  # fallback
             parent_values["date_mkwr7spz"] = {"date": formatted_date}
 
-        # Primary Payor — direct combined label from New Order Board
+        # Primary Payor — status column, write separately
         if payer_name:
-            parent_values["color_mkxmhypt"] = {"label": payer_name}
+            status_columns["color_mkxmhypt"] = {"label": payer_name}
 
         # Insurance Type — derive from the combined payer name
-        # e.g. "Anthem BCBS Commercial" → "Commercial",
-        #      "Fidelis Medicaid" → "Medicaid",
-        #      "Aetna Medicare" → "Medicare"
         insurance_type = ""
         payer_lower = payer_name.lower()
         if "commercial" in payer_lower:
@@ -408,21 +410,23 @@ async def handle_process_order_event(body: dict):
         elif "medicare" in payer_lower:
             insurance_type = "Medicare"
         if insurance_type:
-            parent_values["color_mkxmmm77"] = {"label": insurance_type}
+            status_columns["color_mkxmmm77"] = {"label": insurance_type}
 
-        # Frequency (status column)
+        # Frequency — status column
+        # New Order Board uses "90-Days"/"60-Days" but Claims Board uses "90-Day"/"60-Day"
         if frequency_text:
-            parent_values["color_mky4mb3y"] = {"label": frequency_text}
+            claims_freq = frequency_text.rstrip("s")  # "90-Days" → "90-Day"
+            status_columns["color_mky4mb3y"] = {"label": claims_freq}
 
-        # Subscription Type (status column)
+        # Subscription Type — status column
         sub_type = cols.get("subscription_type", "")
         if sub_type:
-            parent_values["color_mky1qvcf"] = {"label": sub_type}
+            status_columns["color_mky1qvcf"] = {"label": sub_type}
 
-        # Diagnosis (status column)
+        # Diagnosis — status column
         dx = cols.get("diagnosis_code", "")
         if dx:
-            parent_values["color_mky2gpz5"] = {"label": dx}
+            status_columns["color_mky2gpz5"] = {"label": dx}
 
         # Patient Address (location column — needs lat/lng)
         pat_loc = raw_values.get("patient_address", {})
@@ -490,6 +494,27 @@ async def handle_process_order_event(body: dict):
             return
 
         logger.info(f"[ProcessOrder] Created Claims Board item {claims_item_id}: {claims_item_name}")
+
+        # ── Step 5b: Write status columns individually (non-fatal) ──
+        if status_columns:
+            update_col_mutation = """
+            mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+              change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
+            }
+            """
+            for col_id, col_val in status_columns.items():
+                try:
+                    run_query(update_col_mutation, {
+                        "itemId": str(claims_item_id),
+                        "boardId": str(claims_board_id),
+                        "columnId": col_id,
+                        "value": _json.dumps(col_val),
+                    })
+                except Exception as col_err:
+                    logger.warning(
+                        f"[ProcessOrder] Non-fatal: Failed to set {col_id}={col_val} "
+                        f"on Claims Board item {claims_item_id}: {col_err}"
+                    )
 
         # ── Step 6: Create product subitems ──
         if product_subitems:
