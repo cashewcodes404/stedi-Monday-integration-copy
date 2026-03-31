@@ -274,12 +274,10 @@ async def list_webhooks(board_id: str):
     try:
         query = """
         query ($boardId: ID!) {
-          boards(ids: [$boardId]) {
-            webhooks { id event config }
-          }
+          webhooks(board_id: $boardId) { id event config board_id }
         }
         """
-        result = run_query(query, {"boardId": board_id})
+        result = run_query(query, {"boardId": int(board_id)})
         return result
     except Exception as e:
         return {"error": str(e)}
