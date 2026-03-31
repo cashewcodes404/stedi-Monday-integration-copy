@@ -899,12 +899,15 @@ async def handle_event(body: dict):
         logger.info(f"Ignored — status is '{new_label}'")
         return
 
-    # Route to the correct handler based on SUBMISSION_SOURCE
-    if is_claims_board_mode():
-        logger.info(f"CLAIMS BOARD MODE: Routing to Claims Board handler")
+    # Route based on board ID or SUBMISSION_SOURCE
+    board_id = str(event.get("boardId", ""))
+    claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID", "18245429780")
+
+    if board_id == claims_board_id or is_claims_board_mode():
+        logger.info(f"CLAIMS BOARD MODE: Routing to Claims Board handler (board={board_id})")
         await handle_claims_board_event(item_id, is_test)
     else:
-        logger.info(f"ORDER BOARD MODE: Routing to legacy Order Board handler")
+        logger.info(f"ORDER BOARD MODE: Routing to legacy Order Board handler (board={board_id})")
         await handle_order_board_event(item_id, is_test)
 
 
