@@ -184,9 +184,13 @@ async def handle_process_order_event(body: dict):
     raw_value = event.get("value", {})
     logger.info(f"[ProcessOrder] Raw event value: {raw_value}")
 
-    # Check if status changed to "Process Claim"
+    # Check if status changed to "Process Claim" (index 5 on New Order Board)
     value_str = str(raw_value)
-    is_process_claim = "Process Claim" in value_str
+    is_process_claim = (
+        "Process Claim" in value_str
+        or '"index":5' in value_str.replace(" ", "")
+        or '"index": 5' in value_str
+    )
     if not is_process_claim:
         logger.info(f"[ProcessOrder] Status changed but not to 'Process Claim' — ignoring")
         return
@@ -492,13 +496,12 @@ async def handle_process_order_event(body: dict):
               change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
             }
             """
-            # Use {"label": ...} for the status column on New Order Board
-            # since we just added these labels and don't know the index yet
+            # "Claim Sent to Review" = index 3 on New Order Board status column
             run_query(update_mutation, {
                 "itemId": str(item_id),
                 "boardId": str(new_order_board_id),
                 "columnId": "status",  # Order Status on New Order Board
-                "value": _json.dumps({"label": "Claim Sent to Review"}),
+                "value": '{"index": 3}',
             })
             logger.info(f"[ProcessOrder] New Order Board status → 'Claim Sent to Review'")
         except Exception as e:
