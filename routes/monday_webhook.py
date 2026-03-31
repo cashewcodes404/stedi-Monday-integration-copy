@@ -20,6 +20,34 @@ from services.stedi_service import submit_claim, get_277_acknowledgement
 from claims_board_config import is_claims_board_mode
 
 
+# ============================================================
+# WEBHOOK AUTHENTICATION
+# ============================================================
+
+def verify_webhook_secret(request: Request) -> bool:
+    """
+    Verify incoming Monday webhook using WEBHOOK_SECRET.
+
+    Monday sends the secret as the Authorization header value
+    when you configure the webhook integration. If WEBHOOK_SECRET
+    is set, every incoming request MUST include a matching header.
+
+    If WEBHOOK_SECRET is not set, verification is skipped (open mode).
+    This is intentional for initial setup when Monday sends the
+    challenge request before you can configure the secret.
+    """
+    secret = os.getenv("WEBHOOK_SECRET", "")
+    if not secret:
+        return True  # No secret configured — open mode
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header == secret:
+        return True
+
+    logger.warning(f"Webhook auth FAILED — expected secret but got: '{auth_header[:20]}...'")
+    return False
+
+
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 
@@ -72,9 +100,14 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
     except Exception:
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
+    # Always allow challenge (Monday sends it before secret can be configured)
     if "challenge" in body:
         logger.info("Monday challenge received")
         return JSONResponse({"challenge": body["challenge"]})
+
+    # Verify webhook secret on all non-challenge requests
+    if not verify_webhook_secret(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     background_tasks.add_task(handle_event, body)
     return JSONResponse({"status": "received"}, status_code=200)
@@ -94,6 +127,8 @@ async def monday_populate_webhook(request: Request, background_tasks: Background
     The human then reviews, possibly edits, and clicks "Submit Claim"
     which hits the main /webhook endpoint above.
 
+    SAFETY: This endpoint NEVER contacts Stedi. It only reads/writes Monday.
+
     Monday automation config:
       Trigger: "When an item is created"
       Action:  "Send webhook" → POST to {RAILWAY_URL}/monday/webhook/populate
@@ -103,9 +138,14 @@ async def monday_populate_webhook(request: Request, background_tasks: Background
     except Exception:
         return JSONResponse({"error": "invalid json"}, status_code=400)
 
+    # Always allow challenge
     if "challenge" in body:
         logger.info("Monday populate challenge received")
         return JSONResponse({"challenge": body["challenge"]})
+
+    # Verify webhook secret
+    if not verify_webhook_secret(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     background_tasks.add_task(handle_populate_event, body)
     return JSONResponse({"status": "received"}, status_code=200)
@@ -288,7 +328,17 @@ async def handle_claims_board_event(item_id: str, is_test: bool) -> None:
     """
     Claims Board flow: Read pre-computed values from Claims Board subitems,
     build Stedi claim JSON using those values, submit, and update workflow.
+
+    SAFETY: If STEDI_API_KEY is not set, submit_claim() returns a mock
+    response and NOTHING is sent to any insurance payer.
     """
+    # Safety check — log clearly whether this is live or mock
+    from services.stedi_service import is_mock_mode as stedi_mock
+    if stedi_mock():
+        logger.info(f"[CB] ⚠️  STEDI MOCK MODE — no real claim will be submitted")
+    else:
+        logger.info(f"[CB] 🔴 LIVE MODE — claims will be sent to real payers via Stedi")
+
     # Step 1: Fetch Claims Board item (with retry)
     logger.info(f"[CB] Step 1: Fetching Claims Board item {item_id}")
     try:
