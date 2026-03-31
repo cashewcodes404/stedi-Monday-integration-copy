@@ -37,6 +37,7 @@ from fastapi import FastAPI, Request
 
 from routes.monday_webhook import router as monday_router
 from routes.stedi_webhook import router as stedi_router
+from routes.order_to_claims import router as order_to_claims_router
 
 # ─── Load env ─────────────────────────────────────────────────────────────────
 load_dotenv()
@@ -58,6 +59,7 @@ app = FastAPI(
 # ─── Routers ──────────────────────────────────────────────────────────────────
 app.include_router(monday_router, prefix="/monday", tags=["Monday"])
 app.include_router(stedi_router, prefix="/stedi", tags=["Stedi"])
+app.include_router(order_to_claims_router, prefix="/order-to-claims", tags=["Order to Claims"])
 
 
 # ─── Health check ─────────────────────────────────────────────────────────────

@@ -20,6 +20,7 @@ from claim_infrastructure import (
     normalize_gender,
     split_full_name,
     safe_str,
+    build_service_line_from_normalized_order,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,231 @@ def monday_item_to_normalized_orders(monday_item: dict) -> list[dict]:
         normalized_orders.append(order)
 
     return normalized_orders
+
+# ── Claims Board column IDs ────────────────────────────────────────────────────
+# Parent columns on Claims Board that contain claim-level data
+CLAIMS_BOARD_COLUMN_MAP = {
+    "text_mktat89m":    "member_id",
+    "text_mkp3y5ax":    "dob",
+    "text_mkxr2r9b":    "doctor_npi",
+    "text_mkxrh4a4":    "doctor_name",
+    "text_mkwzbcme":    "correlation_id",
+    "date_mkwr7spz":    "dos",
+    "date_mm14rk8d":    "claim_sent_date",
+    # Additional fields needed for Stedi submission
+    "cb_gender":            "gender",
+    "cb_patient_address":   "patient_address",
+    "cb_diagnosis_code":    "diagnosis_code",
+    "cb_cgm_coverage":      "cgm_coverage",
+    "cb_doctor_address":    "doctor_address",
+    "cb_doctor_phone":      "doctor_phone",
+    "cb_subscription_type": "subscription_type",
+}
+
+# Subitem columns on Claims Board (pre-computed product data)
+CLAIMS_BOARD_SUBITEM_MAP = {
+    "cb_sub_hcpc_code":     "hcpc_code",
+    "cb_sub_claim_qty":     "claim_qty",
+    "cb_sub_modifiers":     "modifiers",
+    "cb_sub_est_pay":       "est_pay",
+    "cb_sub_charge_amount": "charge_amount",
+    "cb_sub_units":         "units",
+}
+
+
+def extract_claims_board_columns(column_values: list) -> dict:
+    """Convert Claims Board parent column_values into a semantic dict."""
+    result = {}
+    for col in column_values:
+        col_id = col.get("id", "")
+        field_name = CLAIMS_BOARD_COLUMN_MAP.get(col_id, col_id)
+        result[field_name] = col.get("text", "") or ""
+    return result
+
+
+def extract_claims_board_subitem_columns(column_values: list) -> dict:
+    """Convert Claims Board subitem column_values into a semantic dict."""
+    result = {}
+    for col in column_values:
+        col_id = col.get("id", "")
+        field_name = CLAIMS_BOARD_SUBITEM_MAP.get(col_id, col_id)
+        result[field_name] = col.get("text", "") or ""
+    return result
+
+
+def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
+    """
+    Convert a Claims Board item (parent + 5 product subitems) into
+    normalized order dicts for the claim builder pipeline.
+
+    Key difference from Order Board flow: subitems have PRE-COMPUTED
+    HCPC codes, units, modifiers, and charge amounts. These are read
+    directly and passed through to the service line builder, which
+    respects them instead of re-computing.
+    """
+    parent_cols = extract_claims_board_columns(claims_item.get("column_values", []))
+
+    # Claims Board parent has limited patient info — get what's available
+    raw_name = claims_item.get("name", "")
+    patient_full_name = raw_name
+    payer_from_name = ""
+    # Name format on Claims Board: "Patient Name - Payer" — extract both
+    if " - " in raw_name:
+        parts = raw_name.split(" - ", 1)
+        patient_full_name = parts[0].strip()
+        payer_from_name = parts[1].strip()
+
+    patient_first, patient_last = split_full_name(patient_full_name)
+
+    doctor_full_name = parent_cols.get("doctor_name", "")
+    doctor_first, doctor_last = split_full_name(doctor_full_name)
+
+    subitems = claims_item.get("subitems", [])
+    if not subitems:
+        logger.warning(f"No subitems for Claims Board item {claims_item.get('id')} — cannot build claim")
+        return []
+
+    normalized_orders = []
+
+    for subitem in subitems:
+        sub_cols = extract_claims_board_subitem_columns(subitem.get("column_values", []))
+
+        # Skip subitems with no HCPC code (product not ordered)
+        hcpc_code = sub_cols.get("hcpc_code", "")
+        if not hcpc_code:
+            continue
+
+        order = build_normalized_order_template()
+
+        # Patient info from parent
+        order["source_parent_name"]     = claims_item.get("name", "")
+        order["source_child_name"]      = subitem.get("name", "")
+        order["patient_full_name"]      = patient_full_name
+        order["patient_first_name"]     = patient_first
+        order["patient_last_name"]      = patient_last
+        order["patient_dob"]            = normalize_date(parent_cols.get("dob", ""))
+        order["patient_gender"]         = normalize_gender(parent_cols.get("gender", "")) if parent_cols.get("gender") else "U"
+
+        # Patient address
+        patient_addr_raw = parent_cols.get("patient_address", "")
+        if patient_addr_raw:
+            patient_addr = parse_address(patient_addr_raw)
+            order["patient_address_1"]   = patient_addr.get("address1", "")
+            order["patient_address_2"]   = patient_addr.get("address2", "")
+            order["patient_city"]        = patient_addr.get("city", "")
+            order["patient_state"]       = patient_addr.get("state", "")
+            order["patient_postal_code"] = patient_addr.get("postal_code", "")
+
+        # Insurance — payer comes from item name suffix
+        order["member_id"] = parent_cols.get("member_id", "")
+        order["primary_insurance_name"] = payer_from_name
+        order["payer_name"] = payer_from_name
+        order["diagnosis_code"]     = parent_cols.get("diagnosis_code", "")
+        order["cgm_coverage"]       = parent_cols.get("cgm_coverage", "")
+        order["subscription_type"]  = parent_cols.get("subscription_type", "")
+
+        # Doctor
+        order["doctor_name"]        = doctor_full_name
+        order["doctor_first_name"]  = doctor_first
+        order["doctor_last_name"]   = doctor_last
+        order["doctor_npi"]         = parent_cols.get("doctor_npi", "")
+        order["doctor_phone"]       = parent_cols.get("doctor_phone", "")
+
+        # Doctor address
+        doctor_addr_raw = parent_cols.get("doctor_address", "")
+        if doctor_addr_raw:
+            doctor_addr = parse_address(doctor_addr_raw, drop_units=True)
+            order["doctor_address_1"]    = doctor_addr.get("address1", "")
+            order["doctor_address_2"]    = doctor_addr.get("address2", "")
+            order["doctor_city"]         = doctor_addr.get("city", "")
+            order["doctor_state"]        = doctor_addr.get("state", "")
+            order["doctor_postal_code"]  = doctor_addr.get("postal_code", "")
+
+        # Service date from parent DOS
+        dos = parent_cols.get("dos", "")
+        order["order_date"]    = normalize_date(dos)
+        order["service_date"]  = normalize_date(dos)
+
+        # Product info from subitem
+        order["item"]     = subitem.get("name", "")
+        order["quantity"] = sub_cols.get("claim_qty", "")
+
+        # PRE-COMPUTED values — these bypass the resolver functions
+        order["pre_computed_hcpc"]      = hcpc_code
+        order["pre_computed_units"]     = sub_cols.get("units", "")
+        order["pre_computed_charge"]    = sub_cols.get("charge_amount", "")
+
+        # Parse modifiers (stored as comma-separated string)
+        modifiers_str = sub_cols.get("modifiers", "")
+        if modifiers_str:
+            order["pre_computed_modifiers"] = [m.strip() for m in modifiers_str.split(",") if m.strip()]
+        else:
+            order["pre_computed_modifiers"] = []
+
+        logger.info(
+            f"Claims Board normalized: {patient_full_name} | "
+            f"subitem={subitem.get('name')} | "
+            f"hcpc={hcpc_code} | "
+            f"units={sub_cols.get('units', '')} | "
+            f"charge={sub_cols.get('charge_amount', '')}"
+        )
+
+        normalized_orders.append(order)
+
+    return normalized_orders
+
+
+def build_claims_from_claims_board_item(claims_item: dict) -> list[dict]:
+    """
+    Main entry point for Claims Board flow.
+    Claims Board item → Stedi claim JSON payloads.
+
+    Uses pre-computed HCPC/units/modifiers/charges from subitems.
+    """
+    item_id = claims_item.get("id")
+    item_name = claims_item.get("name")
+
+    logger.info(f"Building claims from Claims Board: {item_name} (id={item_id})")
+
+    normalized_orders = claims_board_item_to_normalized_orders(claims_item)
+    if not normalized_orders:
+        logger.warning(f"No normalized orders for Claims Board item {item_id}")
+        return []
+
+    logger.info(f"Normalized {len(normalized_orders)} service lines from Claims Board")
+
+    grouped_claims = group_normalized_orders_into_claims(normalized_orders)
+    logger.info(f"Grouped into {len(grouped_claims)} claim(s)")
+
+    stedi_payloads = []
+    for claim in grouped_claims:
+        try:
+            payload = build_stedi_claim_json(claim)
+
+            # Remove groupNumber and subscriberGroupName
+            subscriber = payload.get("subscriber", {})
+            subscriber.pop("groupNumber", None)
+            subscriber.pop("subscriberGroupName", None)
+
+            # Format charge amounts
+            payload = format_charge_amounts(payload)
+
+            # Replace tradingPartnerName with official Stedi name
+            payer_id = payload.get("tradingPartnerServiceId", "")
+            official_name = get_official_payer_name(payer_id)
+            if official_name:
+                payload["tradingPartnerName"] = official_name
+                payload["receiver"] = {"organizationName": official_name}
+
+            stedi_payloads.append(payload)
+            logger.info(f"Built Claims Board payload: {claim.get('claim_key')}")
+
+        except Exception as e:
+            logger.error(f"Failed to build Stedi JSON from Claims Board: {e}", exc_info=True)
+
+    logger.info(f"Total Claims Board payloads: {len(stedi_payloads)}")
+    return stedi_payloads
+
 
 def build_claims_from_monday_item(monday_item: dict) -> list[dict]:
     """Main entry point. Monday item → Stedi claim JSON payloads."""

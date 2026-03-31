@@ -24,6 +24,7 @@ from services.era_parser_service import (
 )
 from services.monday_service import populate_era_data_on_claims_item
 from services.stedi_service import get_era_as_835_file, get_277_report
+from claims_board_config import is_claims_board_mode
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Stedi Webhook"])
@@ -71,11 +72,16 @@ async def handle_stedi_event(body: dict) -> None:
         logger.info(f"Unhandled transaction set: {tx_set}")
 
 async def handle_277_event(transaction_id: str, detail: dict) -> None:
-    """Parse 277CA and update Monday Order Board 277 Status"""
+    """
+    Parse 277CA and update Monday with the acknowledgement status.
+
+    In claims_board mode: writes 277 status to Claims Board parent
+    In order_board mode:  writes 277 status to Order Board (legacy)
+    """
     logger.info(f"[277] Processing transaction_id={transaction_id}")
     try:
         from services.stedi_service import get_277_report
-        from services.monday_service import update_277_status
+        from services.monday_service import update_277_status, update_claims_board_277
 
         report = get_277_report(transaction_id)
         logger.info(f"[277] Report fetched successfully")
@@ -84,19 +90,34 @@ async def handle_277_event(transaction_id: str, detail: dict) -> None:
         status, rejection_reason, patient_account_number = parse_277_status(report)
         logger.info(f"[277] Status={status} | PCN={patient_account_number}")
 
-        # Find Order Board item by patientControlNumber
-        item_id = find_order_item_by_pcn(patient_account_number)
-        if not item_id:
-            logger.warning(f"[277] No Order Board item found for PCN={patient_account_number}")
-            return
+        if is_claims_board_mode():
+            # NEW FLOW: Write 277 status to Claims Board parent
+            claims_item_id = _find_claims_item_by_pcn(patient_account_number)
+            if not claims_item_id:
+                claims_item_id = _find_claims_item_by_correlation_id(patient_account_number)
+            if not claims_item_id:
+                logger.warning(f"[277] No Claims Board item found for PCN={patient_account_number}")
+                return
 
-        # Update 277 Status on Order Board
-        update_277_status(
-            item_id=item_id,
-            status=status,
-            rejection_reason=rejection_reason,
-        )
-        logger.info(f"[277] Updated Monday item {item_id} → {status}")
+            update_claims_board_277(
+                claims_item_id=claims_item_id,
+                status=status,
+                rejection_reason=rejection_reason,
+            )
+            logger.info(f"[277] Updated Claims Board item {claims_item_id} → {status}")
+        else:
+            # LEGACY FLOW: Write 277 status to Order Board
+            item_id = find_order_item_by_pcn(patient_account_number)
+            if not item_id:
+                logger.warning(f"[277] No Order Board item found for PCN={patient_account_number}")
+                return
+
+            update_277_status(
+                item_id=item_id,
+                status=status,
+                rejection_reason=rejection_reason,
+            )
+            logger.info(f"[277] Updated Order Board item {item_id} → {status}")
 
     except Exception as e:
         logger.error(f"[277] Failed: {e}", exc_info=True)
@@ -168,6 +189,9 @@ async def handle_835_event(transaction_id: str, detail: dict) -> None:
     2. Parse ERA JSON
     3. Find matching Claims Board item
     4. Populate Monday Claims Board
+
+    In claims_board mode: UPDATE existing subitems (match by HCPC)
+    In order_board mode:  CREATE new subitems (legacy behavior)
     """
     logger.info(f"[835] Processing transaction_id={transaction_id}")
     try:
@@ -188,6 +212,8 @@ async def handle_835_event(transaction_id: str, detail: dict) -> None:
             return
 
         logger.info(f"[835] Parsed {len(era_rows)} ERA row(s)")
+
+        use_claims_board = is_claims_board_mode()
 
         # Step 3 & 4: For each parsed row, find Claims Board item and populate
         for era_row in era_rows:
@@ -212,8 +238,31 @@ async def handle_835_event(transaction_id: str, detail: dict) -> None:
             logger.info(f"[835] Found Claims Board item: {claims_item_id}")
 
             summary = summarize_era_row_for_monday(era_row)
+
+            # Always write parent-level ERA fields
             from services.monday_service import populate_era_data_on_claims_item
             populate_era_data_on_claims_item(claims_item_id, summary)
+
+            # Subitem handling differs by mode
+            children = summary.get("children", [])
+            if children and use_claims_board:
+                # NEW FLOW: Update existing subitems by HCPC match
+                from services.monday_service import update_existing_claims_subitems
+                update_existing_claims_subitems(claims_item_id, children)
+                logger.info(f"[835] Updated existing subitems on {claims_item_id}")
+            elif children:
+                # LEGACY FLOW: Create new subitems (already handled in populate_era_data_on_claims_item)
+                logger.info(f"[835] Created new subitems on {claims_item_id} (legacy mode)")
+
+            # Update workflow status to Paid if in claims_board mode
+            if use_claims_board:
+                try:
+                    from services.monday_service import update_claims_board_workflow
+                    update_claims_board_workflow(claims_item_id, "Paid")
+                    logger.info(f"[835] Claims Board workflow → Paid")
+                except Exception as e:
+                    logger.warning(f"[835] Workflow update failed: {e}")
+
             logger.info(f"[835] Populated Claims Board item {claims_item_id}")
 
     except Exception as e:

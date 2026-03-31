@@ -683,6 +683,673 @@ def populate_era_service_line_subitems(claims_item_id: str, children: list) -> N
         except Exception as e:
             logger.warning(f"Failed to create subitem for {hcpc_code}: {e}")
 
+# ============================================================
+# NEW ORDER BOARD FUNCTIONS
+# ============================================================
+
+def get_new_order_item(item_id: str) -> dict:
+    """
+    Fetch item from the New Order Board (flat, no subitems).
+    Returns mock data in mock mode.
+    """
+    if is_mock_mode():
+        logger.info(f"MOCK MODE: Returning sample new order for item_id={item_id}")
+        return _get_mock_new_order_item(item_id)
+
+    query = """
+    query GetNewOrderItem($itemId: ID!) {
+      items(ids: [$itemId]) {
+        id
+        name
+        column_values {
+          id
+          text
+          value
+        }
+      }
+    }
+    """
+    result = run_query(query, {"itemId": item_id})
+    items = result.get("data", {}).get("items", [])
+    if not items:
+        raise ValueError(f"No item found for item_id={item_id} on New Order Board")
+    logger.info(f"Fetched New Order Board item: {items[0].get('name')}")
+    return items[0]
+
+
+def _get_mock_new_order_item(item_id: str) -> dict:
+    """Return a realistic mock New Order Board item (flat, no subitems)."""
+    return {
+        "id": item_id,
+        "name": "John TestPatient",
+        "column_values": [
+            {"id": "nob_gender",            "text": "Male",        "value": None},
+            {"id": "nob_dob",               "text": "01/15/1980",  "value": None},
+            {"id": "nob_phone",             "text": "555-123-4567", "value": None},
+            {"id": "nob_patient_address",   "text": "123 Test St, Brooklyn, NY 11221", "value": None},
+            {"id": "nob_diagnosis_code",    "text": "E10.65",      "value": None},
+            {"id": "nob_cgm_coverage",      "text": "Insulin",     "value": None},
+            {"id": "nob_doctor_name",       "text": "Jane Doctor", "value": None},
+            {"id": "nob_doctor_npi",        "text": "1234567890",  "value": None},
+            {"id": "nob_doctor_address",    "text": "456 Medical Ave, New York, NY 10001", "value": None},
+            {"id": "nob_doctor_phone",      "text": "555-987-6543", "value": None},
+            {"id": "nob_primary_insurance", "text": "Anthem BCBS Commercial", "value": None},
+            {"id": "nob_member_id",         "text": "TEST123456",  "value": None},
+            {"id": "nob_secondary_id",      "text": "",            "value": None},
+            {"id": "nob_subscription_type", "text": "Individual",  "value": None},
+            {"id": "nob_pump_qty",          "text": "1",           "value": None},
+            {"id": "nob_infusion_set_qty",  "text": "10",          "value": None},
+            {"id": "nob_cartridge_qty",     "text": "10",          "value": None},
+            {"id": "nob_cgm_sensor_qty",    "text": "6",           "value": None},
+            {"id": "nob_cgm_monitor_qty",   "text": "1",           "value": None},
+            {"id": "nob_pump_type",         "text": "t:slim X2",   "value": None},
+            {"id": "nob_cgm_type",          "text": "Dexcom G7",   "value": None},
+            {"id": "nob_order_date",        "text": "2026-03-15",  "value": None},
+            {"id": "nob_order_status",      "text": "Ready",       "value": None},
+            {"id": "nob_auth_id",           "text": "",            "value": None},
+        ],
+    }
+
+
+# ============================================================
+# CLAIMS BOARD — PARENT CREATION
+# ============================================================
+
+def get_claims_board_item(item_id: str) -> dict:
+    """
+    Fetch Claims Board item with all column values and subitems.
+    Used when submitting a claim from the Claims Board.
+    """
+    if is_mock_mode():
+        logger.info(f"MOCK MODE: Returning sample Claims Board item for item_id={item_id}")
+        return _get_mock_claims_board_item(item_id)
+
+    query = """
+    query GetClaimsBoardItem($itemId: ID!) {
+      items(ids: [$itemId]) {
+        id
+        name
+        column_values {
+          id
+          text
+          value
+        }
+        subitems {
+          id
+          name
+          column_values {
+            id
+            text
+            value
+          }
+        }
+      }
+    }
+    """
+    result = run_query(query, {"itemId": item_id})
+    items = result.get("data", {}).get("items", [])
+    if not items:
+        raise ValueError(f"No Claims Board item found for item_id={item_id}")
+    logger.info(f"Fetched Claims Board item: {items[0].get('name')}")
+    return items[0]
+
+
+def _get_mock_claims_board_item(item_id: str) -> dict:
+    """Return a realistic mock Claims Board item with 5 product subitems."""
+    return {
+        "id": item_id,
+        "name": "John TestPatient - Anthem BCBS Commercial",
+        "column_values": [
+            {"id": "text_mktat89m",     "text": "TEST123456",     "value": None},
+            {"id": "text_mkp3y5ax",     "text": "01/15/1980",     "value": None},
+            {"id": "text_mkxr2r9b",     "text": "1234567890",     "value": None},
+            {"id": "text_mkxrh4a4",     "text": "Jane Doctor",    "value": None},
+            {"id": "text_mkwzbcme",     "text": "",               "value": None},
+            {"id": "date_mkwr7spz",     "text": "2026-03-15",     "value": None},
+            {"id": "date_mm14rk8d",     "text": "",               "value": None},
+        ],
+        "subitems": [
+            {
+                "id": "mock_cb_sub_1",
+                "name": "Insulin Pump",
+                "column_values": [
+                    {"id": "cb_sub_hcpc_code",     "text": "E0784",  "value": None},
+                    {"id": "cb_sub_claim_qty",     "text": "1",      "value": None},
+                    {"id": "cb_sub_units",         "text": "1",      "value": None},
+                    {"id": "cb_sub_modifiers",     "text": "",       "value": None},
+                    {"id": "cb_sub_charge_amount", "text": "2500.00","value": None},
+                    {"id": "cb_sub_est_pay",       "text": "2500.00","value": None},
+                ],
+            },
+            {
+                "id": "mock_cb_sub_2",
+                "name": "CGM Sensors",
+                "column_values": [
+                    {"id": "cb_sub_hcpc_code",     "text": "A4239",  "value": None},
+                    {"id": "cb_sub_claim_qty",     "text": "6",      "value": None},
+                    {"id": "cb_sub_units",         "text": "3",      "value": None},
+                    {"id": "cb_sub_modifiers",     "text": "KS",     "value": None},
+                    {"id": "cb_sub_charge_amount", "text": "450.00", "value": None},
+                    {"id": "cb_sub_est_pay",       "text": "450.00", "value": None},
+                ],
+            },
+        ],
+    }
+
+
+def create_claims_board_parent(
+    patient_name: str,
+    payer_name: str,
+    normalized_order: dict,
+) -> str:
+    """
+    Create a Claims Board parent item with patient/order data.
+    This is the NEW flow — creates the parent BEFORE submission.
+    """
+    if is_mock_mode():
+        import uuid
+        mock_id = f"mock_cb_{uuid.uuid4().hex[:8]}"
+        _mock_mutation("create Claims Board parent", patient=patient_name, payer=payer_name)
+        return mock_id
+
+    claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+    if not claims_board_id:
+        logger.warning("MONDAY_CLAIMS_BOARD_ID not set — skipping")
+        return ""
+
+    item_name = f"{patient_name} - {payer_name}" if payer_name else patient_name
+
+    # Step 1: Create the item
+    mutation = """
+    mutation CreateItem($boardId: ID!, $itemName: String!) {
+      create_item(board_id: $boardId, item_name: $itemName) { id }
+    }
+    """
+    result = run_query(mutation, {
+        "boardId": claims_board_id,
+        "itemName": item_name,
+    })
+    new_item_id = result.get("data", {}).get("create_item", {}).get("id", "")
+    if not new_item_id:
+        logger.warning("Failed to create Claims Board parent")
+        return ""
+
+    logger.info(f"Created Claims Board parent {new_item_id}: {item_name}")
+
+    # Step 2: Populate fields from normalized order
+    from claim_infrastructure import normalize_date
+    from datetime import date
+
+    fields_to_set = {
+        "text_mktat89m": normalized_order.get("member_id", ""),
+        "text_mkp3y5ax": normalized_order.get("patient_dob", ""),
+        "text_mkxr2r9b": normalized_order.get("doctor_npi", ""),
+        "text_mkxrh4a4": normalized_order.get("doctor_name", ""),
+    }
+
+    # DOS from order date
+    order_date = normalized_order.get("order_date", "")
+    if order_date:
+        # Normalize to YYYY-MM-DD for Monday date column
+        if len(order_date) == 8:  # YYYYMMDD
+            order_date = f"{order_date[:4]}-{order_date[4:6]}-{order_date[6:8]}"
+        fields_to_set["date_mkwr7spz"] = order_date
+
+    update_mutation = """
+    mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+      change_column_value(
+        item_id: $itemId,
+        board_id: $boardId,
+        column_id: $columnId,
+        value: $value
+      ) { id }
+    }
+    """
+
+    for col_id, value in fields_to_set.items():
+        if not value:
+            continue
+        try:
+            if col_id.startswith("date_"):
+                formatted = '{"date": "' + str(value) + '"}'
+            else:
+                formatted = f'"{value}"'
+
+            run_query(update_mutation, {
+                "itemId":   str(new_item_id),
+                "boardId":  str(claims_board_id),
+                "columnId": col_id,
+                "value":    formatted,
+            })
+            logger.info(f"Claims Board parent: set {col_id} = {value}")
+        except Exception as e:
+            logger.warning(f"Claims Board parent: failed to set {col_id}: {e}")
+
+    return new_item_id
+
+
+def populate_claims_board_subitems(claims_item_id: str, product_subitems: list) -> None:
+    """
+    Populate the 5 pre-created product subitems on a Claims Board item.
+    Creates subitems named after each product and fills in pre-computed values.
+    """
+    if is_mock_mode():
+        _mock_mutation("populate Claims Board subitems",
+                       claims_item_id=claims_item_id,
+                       products=len(product_subitems))
+        return
+
+    from claims_board_config import CLAIMS_BOARD_SUBITEM_WRITE_MAP
+
+    create_mutation = """
+    mutation CreateSubitem($parentId: ID!, $itemName: String!) {
+      create_subitem(parent_item_id: $parentId, item_name: $itemName) {
+        id
+        board { id }
+      }
+    }
+    """
+
+    update_mutation = """
+    mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+      change_column_value(
+        item_id: $itemId,
+        board_id: $boardId,
+        column_id: $columnId,
+        value: $value
+      ) { id }
+    }
+    """
+
+    for product in product_subitems:
+        product_name = product.get("product_name", "Unknown")
+
+        try:
+            # Create subitem
+            result = run_query(create_mutation, {
+                "parentId": str(claims_item_id),
+                "itemName": product_name,
+            })
+
+            subitem_id = (
+                result.get("data", {})
+                .get("create_subitem", {})
+                .get("id", "")
+            )
+            subitem_board_id = (
+                result.get("data", {})
+                .get("create_subitem", {})
+                .get("board", {})
+                .get("id", "")
+            )
+
+            if not subitem_id or not subitem_board_id:
+                logger.warning(f"Failed to create subitem for {product_name}")
+                continue
+
+            logger.info(f"Created Claims Board subitem {subitem_id}: {product_name}")
+
+            # Write pre-computed values
+            field_map = {
+                "hcpc_code":     product.get("hcpc_code", ""),
+                "claim_qty":     product.get("claim_qty", ""),
+                "units":         product.get("units", ""),
+                "modifiers":     ",".join(product.get("modifiers", [])),
+                "charge_amount": product.get("charge_amount", ""),
+                "est_pay":       product.get("est_pay", ""),
+            }
+
+            for field_name, value in field_map.items():
+                if not value:
+                    continue
+
+                col_id = CLAIMS_BOARD_SUBITEM_WRITE_MAP.get(field_name)
+                if not col_id:
+                    logger.warning(f"No column ID mapped for subitem field: {field_name}")
+                    continue
+
+                try:
+                    if col_id.startswith("numeric_"):
+                        formatted = str(value)
+                    else:
+                        formatted = f'"{value}"'
+
+                    run_query(update_mutation, {
+                        "itemId":   str(subitem_id),
+                        "boardId":  str(subitem_board_id),
+                        "columnId": col_id,
+                        "value":    formatted,
+                    })
+                    logger.info(f"  Subitem {product_name}: set {field_name} = {value}")
+                except Exception as e:
+                    logger.warning(f"  Subitem {product_name}: failed {field_name}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to create subitem for {product_name}: {e}")
+
+
+# ============================================================
+# CLAIMS BOARD — 277 STATUS UPDATE
+# ============================================================
+
+def update_claims_board_277(claims_item_id: str, status: str, rejection_reason: str = "") -> None:
+    """
+    Update 277 acknowledgement status on a Claims Board parent item.
+    In the new flow, 277 writes to Claims Board instead of Order Board.
+    """
+    if is_mock_mode():
+        _mock_mutation("update Claims Board 277", claims_item_id=claims_item_id, status=status)
+        return
+
+    from claims_board_config import (
+        CLAIMS_BOARD_277_STATUS_TO_INDEX,
+        CLAIMS_BOARD_PARENT_WRITE_MAP,
+    )
+
+    claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+
+    mutation = """
+    mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+      change_column_value(
+        item_id: $itemId,
+        board_id: $boardId,
+        column_id: $columnId,
+        value: $value
+      ) { id }
+    }
+    """
+
+    # Update 277 status
+    col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("status_277", "cb_277_status")
+    label_index = CLAIMS_BOARD_277_STATUS_TO_INDEX.get(status, "0")
+    status_value = '{"index": ' + label_index + '}'
+
+    try:
+        run_query(mutation, {
+            "itemId": str(claims_item_id),
+            "boardId": str(claims_board_id),
+            "columnId": col_id,
+            "value": status_value,
+        })
+        logger.info(f"Claims Board 277 status → {status}")
+    except Exception as e:
+        logger.warning(f"Failed to update Claims Board 277 status: {e}")
+
+    # Store rejection reason if rejected
+    if status != "Accepted" and rejection_reason:
+        reason_col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("rejection_reason_277", "cb_277_reason")
+        try:
+            run_query(mutation, {
+                "itemId": str(claims_item_id),
+                "boardId": str(claims_board_id),
+                "columnId": reason_col_id,
+                "value": f'"{rejection_reason}"',
+            })
+        except Exception as e:
+            logger.warning(f"Failed to store Claims Board rejection reason: {e}")
+
+
+# ============================================================
+# CLAIMS BOARD — WORKFLOW STATUS UPDATE
+# ============================================================
+
+def update_claims_board_workflow(claims_item_id: str, status: str) -> None:
+    """
+    Update the workflow/claim status on a Claims Board parent item.
+    (e.g., Submitted, Accepted, Paid, etc.)
+    """
+    if is_mock_mode():
+        _mock_mutation("update Claims Board workflow", claims_item_id=claims_item_id, status=status)
+        return
+
+    from claims_board_config import (
+        CLAIMS_BOARD_STATUS_TO_INDEX,
+        CLAIMS_BOARD_PARENT_WRITE_MAP,
+    )
+
+    claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+
+    mutation = """
+    mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+      change_column_value(
+        item_id: $itemId,
+        board_id: $boardId,
+        column_id: $columnId,
+        value: $value
+      ) { id }
+    }
+    """
+
+    col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("claim_status", "cb_claim_status")
+    label_index = CLAIMS_BOARD_STATUS_TO_INDEX.get(status, "1")
+    status_value = '{"index": ' + label_index + '}'
+
+    try:
+        run_query(mutation, {
+            "itemId": str(claims_item_id),
+            "boardId": str(claims_board_id),
+            "columnId": col_id,
+            "value": status_value,
+        })
+        logger.info(f"Claims Board workflow status → {status}")
+    except Exception as e:
+        logger.warning(f"Failed to update Claims Board workflow status: {e}")
+
+
+# ============================================================
+# CLAIMS BOARD — UPDATE EXISTING SUBITEMS (ERA)
+# ============================================================
+
+def update_existing_claims_subitems(claims_item_id: str, children: list) -> None:
+    """
+    UPDATE existing subitems on a Claims Board item with ERA data.
+    Matches by HCPC code (name of the subitem).
+
+    This is the key migration change: instead of CREATING new subitems
+    (old flow), we UPDATE the 5 pre-populated subitems that already
+    have HCPC codes, quantities, etc.
+
+    Matching strategy:
+    1. Primary: Match ERA child HCPC code to subitem name
+    2. Fallback: Positional matching if HCPC match fails
+    """
+    if is_mock_mode():
+        _mock_mutation("update existing Claims Board subitems",
+                       claims_item_id=claims_item_id,
+                       children=len(children))
+        return
+
+    claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+
+    # Step 1: Fetch existing subitems
+    query = """
+    query GetSubitems($itemId: ID!) {
+      items(ids: [$itemId]) {
+        subitems {
+          id
+          name
+          board { id }
+          column_values { id text }
+        }
+      }
+    }
+    """
+    try:
+        result = run_query(query, {"itemId": claims_item_id})
+        existing_subitems = (
+            result.get("data", {})
+            .get("items", [{}])[0]
+            .get("subitems", [])
+        )
+    except Exception as e:
+        logger.error(f"Failed to fetch existing subitems: {e}")
+        # Fallback: create new subitems the old way
+        populate_era_service_line_subitems(claims_item_id, children)
+        return
+
+    if not existing_subitems:
+        logger.warning(f"No existing subitems found for {claims_item_id} — creating new ones")
+        populate_era_service_line_subitems(claims_item_id, children)
+        return
+
+    # Step 2: Build HCPC → subitem mapping
+    hcpc_to_subitem = {}
+    for sub in existing_subitems:
+        sub_name = sub.get("name", "").strip()
+        # Check if name is a HCPC code directly
+        if sub_name:
+            hcpc_to_subitem[sub_name.upper()] = sub
+
+        # Also check if subitem has a HCPC code in its columns
+        for col in sub.get("column_values", []):
+            if col.get("id") in ("cb_sub_hcpc_code",) and col.get("text"):
+                hcpc_to_subitem[col["text"].upper()] = sub
+
+    # Also build name-to-subitem mapping for product name matching
+    from claims_board_config import HCPC_TO_PRODUCT
+    name_to_subitem = {}
+    for sub in existing_subitems:
+        name_to_subitem[sub.get("name", "").strip().lower()] = sub
+
+    update_mutation = """
+    mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+      change_column_value(
+        item_id: $itemId,
+        board_id: $boardId,
+        column_id: $columnId,
+        value: $value
+      ) { id }
+    }
+    """
+
+    matched_count = 0
+    unmatched_children = []
+
+    for child in children:
+        hcpc_code = child.get("HCPC Code", "").strip().upper()
+
+        # Try to find matching subitem
+        matched_subitem = None
+
+        # Strategy 1: Match by HCPC code
+        if hcpc_code and hcpc_code in hcpc_to_subitem:
+            matched_subitem = hcpc_to_subitem[hcpc_code]
+
+        # Strategy 2: Match by product name via HCPC → product lookup
+        if not matched_subitem and hcpc_code:
+            product_name = HCPC_TO_PRODUCT.get(hcpc_code, "")
+            if product_name and product_name.lower() in name_to_subitem:
+                matched_subitem = name_to_subitem[product_name.lower()]
+
+        if not matched_subitem:
+            unmatched_children.append(child)
+            continue
+
+        subitem_id = matched_subitem.get("id")
+        subitem_board_id = matched_subitem.get("board", {}).get("id", "")
+
+        if not subitem_id or not subitem_board_id:
+            unmatched_children.append(child)
+            continue
+
+        # Write ERA fields to the matched subitem
+        _write_era_fields_to_subitem(
+            subitem_id, subitem_board_id, child, update_mutation
+        )
+        matched_count += 1
+
+    # Strategy 3: Positional fallback for unmatched children
+    if unmatched_children:
+        remaining_subitems = [
+            s for s in existing_subitems
+            if s.get("id") not in {
+                hcpc_to_subitem.get(c.get("HCPC Code", "").upper(), {}).get("id")
+                for c in children if c not in unmatched_children
+            }
+        ]
+
+        for i, child in enumerate(unmatched_children):
+            if i < len(remaining_subitems):
+                sub = remaining_subitems[i]
+                subitem_id = sub.get("id")
+                subitem_board_id = sub.get("board", {}).get("id", "")
+                if subitem_id and subitem_board_id:
+                    logger.warning(
+                        f"Positional fallback: ERA {child.get('HCPC Code', '?')} → "
+                        f"subitem {sub.get('name', '?')}"
+                    )
+                    _write_era_fields_to_subitem(
+                        subitem_id, subitem_board_id, child, update_mutation
+                    )
+                    matched_count += 1
+            else:
+                logger.warning(
+                    f"No subitem match for ERA HCPC={child.get('HCPC Code', '?')} — skipping"
+                )
+
+    logger.info(f"ERA subitem update: {matched_count}/{len(children)} matched")
+
+
+def _write_era_fields_to_subitem(
+    subitem_id: str,
+    subitem_board_id: str,
+    child: dict,
+    update_mutation: str,
+) -> None:
+    """Write ERA payment fields to a single subitem."""
+    fields = {
+        "Primary Paid":         child.get("Primary Paid"),
+        "Raw Service Date":     child.get("Raw Service Date"),
+        "Raw Line Item Charge": child.get("Raw Line Item Charge Amount"),
+        "Patient Control #":    child.get("Patient Control #"),
+        "Claim Status Code":    child.get("Claim Status Code"),
+        "Raw Line Control #":   child.get("Raw Line Item Control Number"),
+        "Raw Allowed Actual":   child.get("Raw Allowed Actual"),
+        "Parsed PR Amount":     child.get("Parsed PR Amount"),
+        "Parsed Deductible":    child.get("Parsed Deductible Amount"),
+        "Parsed Coinsurance":   child.get("Parsed Coinsurance Amount"),
+        "Parsed Copay":         child.get("Parsed Copay Amount"),
+        "Parsed Other PR":      child.get("Parsed Other PR Amount"),
+        "Parsed CO Amount":     child.get("Parsed CO Amount"),
+        "Parsed CO-45":         child.get("Parsed CO-45 Amount"),
+        "Parsed CO-253":        child.get("Parsed CO-253 Amount"),
+        "Parsed Other CO":      child.get("Parsed Other CO Amount"),
+        "Parsed OA Amount":     child.get("Parsed OA Amount"),
+        "Parsed PI Amount":     child.get("Parsed PI Amount"),
+        "Parsed Remark Codes":  child.get("Parsed Remark Codes"),
+        "Parsed Remark Text":   child.get("Parsed Remark Text"),
+        "Parsed Adj Codes":     child.get("Parsed Adjustment Codes"),
+        "Parsed Adj Reasons":   child.get("Parsed Adjustment Reasons"),
+    }
+
+    for field_name, value in fields.items():
+        if value is None or value == "" or value == 0.0:
+            continue
+
+        col_id, col_type = SUBITEM_ERA_COLUMN_MAP.get(field_name, (None, None))
+        if not col_id:
+            continue
+
+        try:
+            if col_type == "number":
+                formatted = str(value)
+            elif col_type == "date":
+                formatted = '{"date": "' + str(value) + '"}'
+            elif col_type == "long_text":
+                formatted = '{"text": "' + str(value).replace('"', "'") + '"}'
+            else:
+                formatted = f'"{str(value)}"'
+
+            run_query(update_mutation, {
+                "itemId":   str(subitem_id),
+                "boardId":  str(subitem_board_id),
+                "columnId": col_id,
+                "value":    formatted,
+            })
+        except Exception as e:
+            logger.warning(f"  ERA subitem update failed for {field_name}: {e}")
+
+
 def get_column_settings(board_id: str, column_id: str) -> dict:
     """Debug: Get column settings to find valid status labels"""
     query = """

@@ -3,10 +3,20 @@ import json
 import time
 from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-from services.monday_service import get_order_item, update_277_status, create_claims_board_item, update_claim_status, post_claim_update_to_monday, store_claim_pcn
+from services.monday_service import (
+    get_order_item,
+    update_277_status,
+    create_claims_board_item,
+    update_claim_status,
+    post_claim_update_to_monday,
+    store_claim_pcn,
+    get_claims_board_item,
+    update_claims_board_workflow,
+)
 
-from services.claim_builder_service import build_claims_from_monday_item
+from services.claim_builder_service import build_claims_from_monday_item, build_claims_from_claims_board_item
 from services.stedi_service import submit_claim, get_277_acknowledgement
+from claims_board_config import is_claims_board_mode
 
 
 MAX_RETRIES = 3
@@ -92,6 +102,144 @@ async def handle_event(body: dict):
         logger.info(f"Ignored — status is '{new_label}'")
         return
 
+    # Route to the correct handler based on SUBMISSION_SOURCE
+    if is_claims_board_mode():
+        logger.info(f"CLAIMS BOARD MODE: Routing to Claims Board handler")
+        await handle_claims_board_event(item_id, is_test)
+    else:
+        logger.info(f"ORDER BOARD MODE: Routing to legacy Order Board handler")
+        await handle_order_board_event(item_id, is_test)
+
+
+async def handle_claims_board_event(item_id: str, is_test: bool) -> None:
+    """
+    Claims Board flow: Read pre-computed values from Claims Board subitems,
+    build Stedi claim JSON using those values, submit, and update workflow.
+    """
+    # Step 1: Fetch Claims Board item (with retry)
+    logger.info(f"[CB] Step 1: Fetching Claims Board item {item_id}")
+    try:
+        claims_data = retry_operation(
+            lambda: get_claims_board_item(item_id),
+            f"Fetch Claims Board item {item_id}",
+        )
+    except Exception as e:
+        logger.error(f"[CB] Failed to fetch Claims Board item: {e}", exc_info=True)
+        return
+
+    # Step 2: Build Stedi claim JSON using pre-computed values
+    logger.info("[CB] Step 2: Building Stedi claim JSON from Claims Board")
+    try:
+        stedi_payloads = build_claims_from_claims_board_item(claims_data)
+        if not stedi_payloads:
+            logger.warning("[CB] No payloads generated from Claims Board")
+            return
+        logger.info(f"[CB] Built {len(stedi_payloads)} payload(s)")
+    except Exception as e:
+        logger.error(f"[CB] Failed to build claim: {e}", exc_info=True)
+        return
+
+    submitted_claims = []
+
+    # Step 3: Submit each payload
+    for i, payload in enumerate(stedi_payloads, 1):
+        if is_test:
+            payload["tradingPartnerServiceId"] = "STEDITEST"
+            payload["tradingPartnerName"]      = "Stedi Test Payer"
+            payload["receiver"]                = {"organizationName": "Stedi"}
+            payload["usageIndicator"]          = "T"
+            logger.info("[CB] TEST MODE: payload overridden to Stedi Test Payer")
+
+        payer = payload.get("tradingPartnerName", "Unknown")
+        logger.info(f"[CB] Step 3: Submitting payload #{i} | payer={payer}")
+
+        try:
+            stedi_response = submit_claim(payload)
+            claim_id               = stedi_response.get("claim_id", "")
+            patient_control_number = stedi_response.get("patient_control_number", "")
+            inline_277_status      = stedi_response.get("inline_277_status", "Pending")
+
+            logger.info(f"[CB] Submitted: claim_id={claim_id} | pcn={patient_control_number}")
+
+            # Step 4a: Update Claims Board workflow status → Submitted
+            try:
+                retry_operation(
+                    lambda: update_claims_board_workflow(claims_item_id=item_id, status="Submitted"),
+                    f"Update Claims Board workflow for {item_id}",
+                )
+            except Exception as e:
+                logger.warning(f"[CB] Workflow update failed: {e}")
+
+            # Step 4b: Store correlation ID / PCN on Claims Board
+            try:
+                from services.monday_service import run_query
+                claims_board_id = __import__('os').getenv("MONDAY_CLAIMS_BOARD_ID")
+                mutation = """
+                mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+                  change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
+                }
+                """
+                run_query(mutation, {
+                    "itemId": str(item_id),
+                    "boardId": str(claims_board_id),
+                    "columnId": "text_mkwzbcme",
+                    "value": f'"{patient_control_number}"',
+                })
+                logger.info(f"[CB] Stored PCN={patient_control_number} on Claims Board item")
+            except Exception as e:
+                logger.warning(f"[CB] PCN store failed: {e}")
+
+            # Step 4c: Collect for batch update
+            submitted_claims.append({
+                "claim_id": claim_id,
+                "payer": payer,
+                "pcn": patient_control_number,
+                "payload": payload,
+            })
+
+            # Step 4d: Inline 277 status
+            if inline_277_status != "Pending":
+                try:
+                    from services.monday_service import update_claims_board_277
+                    update_claims_board_277(
+                        claims_item_id=item_id,
+                        status=inline_277_status,
+                    )
+                except Exception as e:
+                    logger.warning(f"[CB] Inline 277 update failed: {e}")
+
+            # Step 4e: Set Claim Sent Date
+            try:
+                from datetime import date
+                from services.monday_service import run_query
+                claims_board_id = __import__('os').getenv("MONDAY_CLAIMS_BOARD_ID")
+                mutation = """
+                mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+                  change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
+                }
+                """
+                today = date.today().isoformat()
+                run_query(mutation, {
+                    "itemId": str(item_id),
+                    "boardId": str(claims_board_id),
+                    "columnId": "date_mm14rk8d",
+                    "value": '{"date": "' + today + '"}',
+                })
+            except Exception as e:
+                logger.warning(f"[CB] Claim Sent Date update failed: {e}")
+
+        except Exception as e:
+            logger.error(f"[CB] Failed on payload #{i}: {e}", exc_info=True)
+
+    if submitted_claims:
+        logger.info(f"[CB] Successfully submitted {len(submitted_claims)} claim(s)")
+
+
+async def handle_order_board_event(item_id: str, is_test: bool) -> None:
+    """
+    Legacy Order Board flow: Read from Order Board subitems,
+    compute everything from scratch, submit, create Claims Board item.
+    """
     # Step 1: Fetch order (with retry)
     logger.info(f"Step 1: Fetching order {item_id} | test={is_test}")
     try:

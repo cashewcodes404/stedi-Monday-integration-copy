@@ -775,36 +775,66 @@ def build_claim_group_key(normalized_order: dict) -> str:
 def build_service_line_from_normalized_order(normalized_order: dict) -> dict:
     """
     Convert one normalized order row into a simple internal service-line object.
+
+    MIGRATION SUPPORT: If the normalized order contains pre-computed values
+    (from Claims Board subitems), those values are used directly instead of
+    re-computing them. This respects human edits made on the Claims Board.
+
+    Pre-computed fields checked:
+      - pre_computed_hcpc      → procedure_code
+      - pre_computed_units     → service_unit_count
+      - pre_computed_modifiers → procedure_modifiers (list)
+      - pre_computed_charge    → line_item_charge_amount
     """
     from claim_assumptions import add_days_to_yyyymmdd
 
     order_date = safe_str(normalized_order.get("order_date", ""))
-    service_date = add_days_to_yyyymmdd(order_date, 1)
+    service_date = safe_str(normalized_order.get("service_date", ""))
+    if not service_date:
+        service_date = add_days_to_yyyymmdd(order_date, 1)
 
-    payer_name = resolve_payer_name(normalized_order)
+    # Check for pre-computed values (Claims Board flow)
+    pre_hcpc      = safe_str(normalized_order.get("pre_computed_hcpc", ""))
+    pre_units     = safe_str(normalized_order.get("pre_computed_units", ""))
+    pre_modifiers = normalized_order.get("pre_computed_modifiers")
+    pre_charge    = safe_str(normalized_order.get("pre_computed_charge", ""))
+
+    if pre_hcpc and pre_units and pre_charge:
+        # Use pre-computed values — respects human edits on Claims Board
+        procedure_code = pre_hcpc
+        service_unit_count = pre_units
+        procedure_modifiers = pre_modifiers if isinstance(pre_modifiers, list) else []
+        line_item_charge_amount = pre_charge
+    else:
+        # Legacy flow — compute from scratch using resolver functions
+        payer_name = resolve_payer_name(normalized_order)
+        item_name = safe_str(normalized_order.get("item", ""))
+        variant = safe_str(normalized_order.get("variant", ""))
+        quantity = safe_str(normalized_order.get("quantity", ""))
+        cgm_coverage = safe_str(normalized_order.get("cgm_coverage", ""))
+
+        procedure_code = resolve_procedure_code(payer_name, item_name)
+        service_unit_count = resolve_service_unit_count(
+            payer_name=payer_name,
+            item_name=item_name,
+            variant=variant,
+            quantity=quantity,
+            procedure_code=procedure_code,
+        )
+        procedure_modifiers = resolve_procedure_modifiers(
+            payer_name=payer_name,
+            procedure_code=procedure_code,
+            cgm_coverage=cgm_coverage,
+        )
+        line_item_charge_amount = resolve_line_item_charge_amount(
+            payer_name=payer_name,
+            procedure_code=procedure_code,
+            service_unit_count=service_unit_count,
+        )
+
     item_name = safe_str(normalized_order.get("item", ""))
     variant = safe_str(normalized_order.get("variant", ""))
     quantity = safe_str(normalized_order.get("quantity", ""))
-    cgm_coverage = safe_str(normalized_order.get("cgm_coverage", ""))
-
-    procedure_code = resolve_procedure_code(payer_name, item_name)
-    service_unit_count = resolve_service_unit_count(
-        payer_name=payer_name,
-        item_name=item_name,
-        variant=variant,
-        quantity=quantity,
-        procedure_code=procedure_code,
-    )
-    procedure_modifiers = resolve_procedure_modifiers(
-        payer_name=payer_name,
-        procedure_code=procedure_code,
-        cgm_coverage=cgm_coverage,
-    )
-    line_item_charge_amount = resolve_line_item_charge_amount(
-        payer_name=payer_name,
-        procedure_code=procedure_code,
-        service_unit_count=service_unit_count,
-)
 
     return {
         "source_child_name": safe_str(normalized_order.get("source_child_name", "")),
