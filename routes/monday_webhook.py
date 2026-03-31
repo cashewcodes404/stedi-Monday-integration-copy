@@ -462,7 +462,7 @@ async def handle_process_order_event(body: dict):
                 "itemId": str(item_id),
                 "boardId": str(order_board_id),
                 "columnId": "color_mkwtxw9r",  # Order Status column
-                "value": _json.dumps({"label": "Claim Sent to Review"}),
+                "value": '{"index": 7}',  # "Claim Sent to Review"
             })
             logger.info(f"[ProcessOrder] Order Board status → 'Claim Sent to Review'")
         except Exception as e:
