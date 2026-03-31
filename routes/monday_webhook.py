@@ -251,18 +251,64 @@ async def handle_populate_event(body: dict):
         normalized["order_date"]   = normalize_date(dos)
         normalized["service_date"] = normalize_date(dos)
 
-        # Step 3: Get product quantities from subitems
-        # The Claims Board subitems should already exist (created by Monday automation
-        # or during item creation). We need to read them to get quantities,
-        # then compute and write back the claim fields.
-        existing_subitems = claims_item.get("subitems", [])
+        # Step 3: Get product quantities from Claims Board parent columns
+        # The Claims Board parent has quantity columns that need to be mapped
+        # to the PRODUCT_CATEGORIES qty_field names used by compute functions.
         order_cols = dict(cols)  # copy for compute functions
 
+        # Normalize Claims Board parent column names → PRODUCT_CATEGORIES qty_field names
+        # Parent column semantic names (from CLAIMS_BOARD_PARENT_COLUMN_MAP):
+        #   pump_qty, infusion_1_qty, infusion_2_qty, monitor_qty,
+        #   a4239_units, e0784_units, e2103_units
+        # PRODUCT_CATEGORIES expects:
+        #   pump_qty, infusion_set_qty, cartridge_qty, cgm_sensor_qty, cgm_monitor_qty
+        order_cols["pump_qty"] = order_cols.get("pump_qty", "") or order_cols.get("e0784_units", "")
+
+        # CGM sensors: mapped from a4239_units on parent
+        order_cols["cgm_sensor_qty"] = order_cols.get("a4239_units", "")
+
+        # CGM monitor: mapped from e2103_units or monitor_qty on parent
+        order_cols["cgm_monitor_qty"] = order_cols.get("e2103_units", "") or order_cols.get("monitor_qty", "")
+
+        # Infusion: combine infusion_1_qty + infusion_2_qty
+        try:
+            inf1 = int(float(order_cols.get("infusion_1_qty", "0") or "0"))
+            inf2 = int(float(order_cols.get("infusion_2_qty", "0") or "0"))
+            inf_total = inf1 + inf2
+            order_cols["infusion_set_qty"] = str(inf_total) if inf_total > 0 else ""
+        except (ValueError, TypeError):
+            order_cols["infusion_set_qty"] = ""
+
+        # Cartridge: same count as infusion sets (each infusion set pairs with cartridges)
+        order_cols["cartridge_qty"] = order_cols.get("infusion_set_qty", "")
+
+        logger.info(
+            f"[Populate] Qty mapping: pump={order_cols.get('pump_qty')}, "
+            f"sensor={order_cols.get('cgm_sensor_qty')}, "
+            f"monitor={order_cols.get('cgm_monitor_qty')}, "
+            f"infusion={order_cols.get('infusion_set_qty')}, "
+            f"cartridge={order_cols.get('cartridge_qty')}"
+        )
+
+        # Also try reading from existing Claims Board subitems (as fallback)
+        existing_subitems = claims_item.get("subitems", [])
         if existing_subitems:
-            # Extract quantities from existing subitems
-            from routes.order_to_claims import _extract_product_quantities_from_subitems
-            subitem_quantities = _extract_product_quantities_from_subitems(existing_subitems)
-            order_cols.update(subitem_quantities)
+            # Claims Board subitems use numeric_mm1czbyg for Order Quantity
+            for sub in existing_subitems:
+                sub_name = sub.get("name", "").strip().lower()
+                for cv in sub.get("column_values", []):
+                    if cv.get("id") == "numeric_mm1czbyg" and cv.get("text"):
+                        qty_val = cv["text"]
+                        if "pump" in sub_name and not order_cols.get("pump_qty"):
+                            order_cols["pump_qty"] = qty_val
+                        elif "sensor" in sub_name and not order_cols.get("cgm_sensor_qty"):
+                            order_cols["cgm_sensor_qty"] = qty_val
+                        elif "monitor" in sub_name and not order_cols.get("cgm_monitor_qty"):
+                            order_cols["cgm_monitor_qty"] = qty_val
+                        elif "infusion" in sub_name and not order_cols.get("infusion_set_qty"):
+                            order_cols["infusion_set_qty"] = qty_val
+                        elif "cartridge" in sub_name and not order_cols.get("cartridge_qty"):
+                            order_cols["cartridge_qty"] = qty_val
 
         # Step 4: Compute HCPC codes, units, modifiers, charges for each product
         product_subitems = compute_all_product_subitems(normalized, order_cols)
