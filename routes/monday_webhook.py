@@ -112,6 +112,383 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
     background_tasks.add_task(handle_event, body)
     return JSONResponse({"status": "received"}, status_code=200)
 
+
+# ============================================================
+# PROCESS ORDER → CLAIMS BOARD (NEW ENDPOINT)
+# ============================================================
+
+@router.post("/webhook/process-order")
+async def monday_process_order_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Webhook for Order Board → Claims Board flow.
+
+    Trigger: Order Board status change to "Process Claim"
+    Monday automation: "When status changes to Process Claim" → send webhook
+
+    Flow:
+      1. Read Order Board item (patient, insurance, doctor, product quantities)
+      2. Compute HCPC codes, units, modifiers, insurance label, frequency
+      3. Create Claims Board parent item with all patient/insurance data
+      4. Create 5 product subitems with HCPC, Insurance, Frequency, Qty
+      5. Monday formulas auto-compute Claim Qty and Est. Pay
+      6. Update Order Board status → "Claim Sent to Review"
+
+    SAFETY: This endpoint NEVER contacts Stedi. It only reads Order Board
+    and writes to Claims Board. The human reviews on Claims Board and
+    manually triggers "Submit Claim" when ready.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    # Always allow challenge
+    if "challenge" in body:
+        logger.info("Monday process-order challenge received")
+        return JSONResponse({"challenge": body["challenge"]})
+
+    # Verify webhook secret
+    if not verify_webhook_secret(request):
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    background_tasks.add_task(handle_process_order_event, body)
+    return JSONResponse({"status": "received"}, status_code=200)
+
+
+async def handle_process_order_event(body: dict):
+    """
+    Handle an Order Board → Claims Board creation event.
+    Reads Order Board item, computes claim fields, creates Claims Board
+    parent + subitems for human review.
+    """
+    event = body.get("event", {})
+    item_id = str(event.get("pulseId") or event.get("itemId") or "")
+    board_id = str(event.get("boardId") or "")
+
+    if not item_id:
+        logger.warning("[ProcessOrder] No item ID in event — ignoring")
+        return
+
+    logger.info(f"[ProcessOrder] Triggered for Order Board item {item_id}")
+
+    try:
+        from services.monday_service import run_query
+        from claims_board_config import (
+            ORDER_BOARD_COLUMN_MAP,
+            CLAIMS_BOARD_PARENT_WRITE_MAP,
+            resolve_subitem_insurance_label,
+            PRODUCT_CATEGORIES,
+        )
+        from claim_infrastructure import (
+            normalize_date,
+            split_full_name,
+            parse_address,
+        )
+        from routes.order_to_claims import compute_all_product_subitems
+        from claim_infrastructure import build_normalized_order_template
+
+        # ── Step 1: Fetch Order Board item ──
+        logger.info(f"[ProcessOrder] Step 1: Fetching Order Board item {item_id}")
+        fetch_query = """
+        query GetOrderItem($itemId: ID!) {
+          items(ids: [$itemId]) {
+            id
+            name
+            column_values { id text type value }
+          }
+        }
+        """
+        result = retry_operation(
+            lambda: run_query(fetch_query, {"itemId": item_id}),
+            f"Fetch Order Board item {item_id}",
+        )
+        order_item = result.get("data", {}).get("items", [{}])[0]
+
+        if not order_item or not order_item.get("column_values"):
+            logger.warning(f"[ProcessOrder] Order Board item {item_id} has no data")
+            return
+
+        # Parse columns using Order Board map
+        cols = {}
+        for cv in order_item.get("column_values", []):
+            col_id = cv.get("id", "")
+            field_name = ORDER_BOARD_COLUMN_MAP.get(col_id, col_id)
+            cols[field_name] = cv.get("text", "") or ""
+
+        patient_name = order_item.get("name", "")
+        patient_first, patient_last = split_full_name(patient_name)
+        patient_addr = parse_address(cols.get("patient_address", ""))
+
+        doctor_full = cols.get("doctor_name", "")
+        doctor_first, doctor_last = split_full_name(doctor_full)
+        doctor_addr = parse_address(cols.get("doctor_address", ""))
+
+        logger.info(
+            f"[ProcessOrder] Patient={patient_name}, "
+            f"Payer={cols.get('primary_insurance')}, "
+            f"Type={cols.get('insurance_type')}, "
+            f"Freq={cols.get('frequency')}"
+        )
+
+        # ── Step 2: Build normalized order for compute functions ──
+        normalized = build_normalized_order_template()
+        normalized["patient_full_name"]   = patient_name
+        normalized["patient_first_name"]  = patient_first
+        normalized["patient_last_name"]   = patient_last
+        normalized["patient_dob"]         = normalize_date(cols.get("dob", ""))
+        normalized["patient_address_1"]   = patient_addr.get("address1", "")
+        normalized["patient_city"]        = patient_addr.get("city", "")
+        normalized["patient_state"]       = patient_addr.get("state", "")
+        normalized["patient_postal_code"] = patient_addr.get("postal_code", "")
+
+        normalized["primary_insurance_name"] = cols.get("primary_insurance", "")
+        normalized["member_id"]              = cols.get("member_id", "")
+        normalized["subscription_type"]      = cols.get("subscription_type", "")
+        normalized["diagnosis_code"]         = cols.get("diagnosis_code", "")
+
+        normalized["doctor_name"]         = doctor_full
+        normalized["doctor_first_name"]   = doctor_first
+        normalized["doctor_last_name"]    = doctor_last
+        normalized["doctor_npi"]          = cols.get("doctor_npi", "")
+        normalized["doctor_address_1"]    = doctor_addr.get("address1", "")
+        normalized["doctor_city"]         = doctor_addr.get("city", "")
+        normalized["doctor_state"]        = doctor_addr.get("state", "")
+        normalized["doctor_postal_code"]  = doctor_addr.get("postal_code", "")
+
+        dos = cols.get("dos", "")
+        normalized["order_date"]   = normalize_date(dos)
+        normalized["service_date"] = normalize_date(dos)
+
+        # ── Step 3: Normalize product quantities ──
+        order_cols = dict(cols)
+        order_cols["pump_qty"] = cols.get("pump_qty", "")
+
+        # CGM sensors: Order Board doesn't have a4239_units, derive from monitor_qty
+        # If CGM type is set and monitor_qty > 0, sensors are usually same qty
+        cgm_type = cols.get("cgm_type", "")
+        monitor_qty = cols.get("monitor_qty", "")
+        # For sensors, we use monitor_qty as the sensor qty (each monitor order
+        # comes with sensors). This is a reasonable default; human can edit.
+        if cgm_type and monitor_qty and int(float(monitor_qty or "0")) > 0:
+            order_cols["cgm_sensor_qty"] = monitor_qty
+            order_cols["cgm_monitor_qty"] = monitor_qty
+        else:
+            order_cols["cgm_sensor_qty"] = ""
+            order_cols["cgm_monitor_qty"] = monitor_qty or ""
+
+        # Infusion: combine inf_1 + inf_2
+        try:
+            inf1 = int(float(cols.get("infusion_1_qty", "0") or "0"))
+            inf2 = int(float(cols.get("infusion_2_qty", "0") or "0"))
+            inf_total = inf1 + inf2
+            order_cols["infusion_set_qty"] = str(inf_total) if inf_total > 0 else ""
+        except (ValueError, TypeError):
+            order_cols["infusion_set_qty"] = ""
+
+        # Cartridge = same as infusion total
+        order_cols["cartridge_qty"] = order_cols.get("infusion_set_qty", "")
+
+        logger.info(
+            f"[ProcessOrder] Qty: pump={order_cols.get('pump_qty')}, "
+            f"sensor={order_cols.get('cgm_sensor_qty')}, "
+            f"monitor={order_cols.get('cgm_monitor_qty')}, "
+            f"infusion={order_cols.get('infusion_set_qty')}, "
+            f"cartridge={order_cols.get('cartridge_qty')}"
+        )
+
+        # ── Step 4: Compute product subitems ──
+        product_subitems = compute_all_product_subitems(normalized, order_cols)
+
+        if not product_subitems:
+            logger.warning(f"[ProcessOrder] No products with qty > 0 for item {item_id}")
+            # Still create Claims Board item even with no products
+            # (human might want to add them manually)
+
+        # Enrich products with insurance label and frequency
+        parent_payor = cols.get("primary_insurance", "")
+        insurance_type = cols.get("insurance_type", "")
+        insurance_label = resolve_subitem_insurance_label(parent_payor, insurance_type)
+
+        frequency_text = cols.get("frequency", "")
+        order_frequency = ""
+        if "90" in frequency_text:
+            order_frequency = "90-Days"
+        elif "60" in frequency_text:
+            order_frequency = "60-Days"
+
+        for product in product_subitems:
+            product["subitem_insurance_label"] = insurance_label
+            product["order_frequency"] = order_frequency
+
+        # ── Step 5: Create Claims Board parent item ──
+        logger.info("[ProcessOrder] Step 5: Creating Claims Board parent item")
+        claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+
+        # Item name: "Patient Name" (same format as existing Claims Board items)
+        claims_item_name = patient_name
+
+        create_item_mutation = """
+        mutation CreateItem($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
+          create_item(board_id: $boardId, item_name: $itemName, column_values: $columnValues) {
+            id
+          }
+        }
+        """
+
+        # Build column values JSON for Claims Board parent
+        import json as _json
+
+        # Map Order Board data → Claims Board parent columns
+        parent_values = {}
+
+        # DOB
+        if cols.get("dob"):
+            parent_values["text_mkp3y5ax"] = cols["dob"]
+
+        # Member ID
+        if cols.get("member_id"):
+            parent_values["text_mktat89m"] = cols["member_id"]
+
+        # Doctor
+        if cols.get("doctor_name"):
+            parent_values["text_mkxrh4a4"] = cols["doctor_name"]
+        if cols.get("doctor_npi"):
+            parent_values["text_mkxr2r9b"] = cols["doctor_npi"]
+
+        # DOS (date column needs {"date": "YYYY-MM-DD"})
+        if dos:
+            parent_values["date_mkwr7spz"] = {"date": normalize_date(dos)}
+
+        # Primary Payor (status column — use label text)
+        if parent_payor:
+            parent_values["color_mkxmhypt"] = {"label": parent_payor}
+
+        # Insurance Type (status column)
+        if insurance_type:
+            parent_values["color_mkxmmm77"] = {"label": insurance_type}
+
+        # Frequency (status column)
+        if frequency_text:
+            parent_values["color_mky4mb3y"] = {"label": frequency_text}
+
+        # Subscription Type (status column)
+        sub_type = cols.get("subscription_type", "")
+        if sub_type:
+            parent_values["color_mky1qvcf"] = {"label": sub_type}
+
+        # Diagnosis (status column)
+        dx = cols.get("diagnosis_code", "")
+        if dx:
+            parent_values["color_mky2gpz5"] = {"label": dx}
+
+        # Patient Address (location column)
+        if cols.get("patient_address"):
+            parent_values["location_mkxxpesw"] = {
+                "lat": "", "lng": "",
+                "address": cols["patient_address"],
+            }
+
+        # Doctor Address (location column)
+        if cols.get("doctor_address"):
+            parent_values["location_mkxr251b"] = {
+                "lat": "", "lng": "",
+                "address": cols["doctor_address"],
+            }
+
+        # Product quantities on parent
+        if cols.get("pump_qty") and cols["pump_qty"] != "0":
+            parent_values["numeric_mkwz4zkt"] = cols["pump_qty"]
+        if cols.get("infusion_1_qty") and cols["infusion_1_qty"] != "0":
+            parent_values["numeric_mkwz337y"] = cols["infusion_1_qty"]
+        if cols.get("infusion_2_qty") and cols["infusion_2_qty"] != "0":
+            parent_values["numeric_mkwz9g9f"] = cols["infusion_2_qty"]
+        if monitor_qty and monitor_qty != "0":
+            parent_values["numeric_mkwzb2f4"] = monitor_qty  # E2103 units
+            parent_values["numeric_mkwz251j"] = monitor_qty  # A4239 units
+            parent_values["numeric_mkwzr5js"] = monitor_qty  # Monitor Qty
+
+        # Authorization
+        auth = cols.get("authorization", "")
+        if auth:
+            parent_values["text_mkwrb2t9"] = auth
+
+        # Medicaid ID
+        medicaid_id = cols.get("medicaid_id", "")
+        if medicaid_id:
+            parent_values["text_mkwrwrpc"] = medicaid_id
+
+        # Customer Order (link back to Order Board item)
+        parent_values["text_mkwzbcme"] = str(item_id)
+
+        column_values_json = _json.dumps(parent_values)
+
+        create_result = retry_operation(
+            lambda: run_query(create_item_mutation, {
+                "boardId": str(claims_board_id),
+                "itemName": claims_item_name,
+                "columnValues": column_values_json,
+            }),
+            "Create Claims Board parent item",
+        )
+
+        claims_item_id = (
+            create_result.get("data", {})
+            .get("create_item", {})
+            .get("id", "")
+        )
+
+        if not claims_item_id:
+            logger.error("[ProcessOrder] Failed to create Claims Board item — no ID returned")
+            return
+
+        logger.info(f"[ProcessOrder] Created Claims Board item {claims_item_id}: {claims_item_name}")
+
+        # ── Step 6: Create product subitems ──
+        if product_subitems:
+            logger.info(f"[ProcessOrder] Step 6: Creating {len(product_subitems)} subitems")
+            from services.monday_service import populate_claims_board_subitems
+            populate_claims_board_subitems(claims_item_id, product_subitems)
+            logger.info(f"[ProcessOrder] Created and populated {len(product_subitems)} subitems")
+
+        # ── Step 7: Update Order Board status → "Claim Sent to Review" ──
+        try:
+            order_board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
+            update_mutation = """
+            mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+              change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
+            }
+            """
+            run_query(update_mutation, {
+                "itemId": str(item_id),
+                "boardId": str(order_board_id),
+                "columnId": "color_mkwtxw9r",  # Order Status column
+                "value": _json.dumps({"label": "Claim Sent to Review"}),
+            })
+            logger.info(f"[ProcessOrder] Order Board status → 'Claim Sent to Review'")
+        except Exception as e:
+            logger.warning(f"[ProcessOrder] Failed to update Order Board status: {e}")
+
+        # ── Step 8: Store Claims Board item ID back on Order Board ──
+        try:
+            run_query(update_mutation, {
+                "itemId": str(item_id),
+                "boardId": str(order_board_id),
+                "columnId": "text_mm1g99yk",  # Stedi Claim ID column (repurposed)
+                "value": f'"{claims_item_id}"',
+            })
+            logger.info(f"[ProcessOrder] Stored Claims Board ID {claims_item_id} on Order Board")
+        except Exception as e:
+            logger.warning(f"[ProcessOrder] Failed to store Claims Board ID: {e}")
+
+        logger.info(
+            f"[ProcessOrder] ✅ Complete: Order {item_id} → Claims Board {claims_item_id} "
+            f"with {len(product_subitems)} subitems"
+        )
+
+    except Exception as e:
+        logger.error(f"[ProcessOrder] Failed for item {item_id}: {e}", exc_info=True)
+
+
 @router.post("/webhook/populate")
 async def monday_populate_webhook(request: Request, background_tasks: BackgroundTasks):
     """

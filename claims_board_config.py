@@ -57,6 +57,56 @@ def get_new_order_board_id() -> str:
 
 
 # ============================================================
+# ORDER BOARD (18204609819) — COLUMN MAPPINGS
+# ============================================================
+# The original Order Board. Product quantities are on parent-level columns.
+# No subitems needed for reading — all data is on the parent.
+
+ORDER_BOARD_COLUMN_MAP = {
+    # Patient info
+    "text_mkp3y5ax":        "dob",
+    "phone_mkwrkc73":       "phone",
+    "email_mkwrdzzw":       "email",
+    "location_mkwr5c7w":    "patient_address",        # Location type
+
+    # Doctor info
+    "text_mkxnky7q":        "doctor_name",
+    "text_mkxnfg9w":        "doctor_npi",
+    "location_mkxnk6jb":    "doctor_address",         # Location type
+    "phone_mkxnbspk":       "doctor_phone",
+
+    # Insurance
+    "color_mkxnbypc":       "primary_insurance",      # Status: Fidelis, Anthem BCBS, Aetna, etc.
+    "color_mkxn5k1a":       "insurance_type",         # Status: Commercial, Medicaid, Medicare
+    "text_mktat89m":        "member_id",
+    "text_mkwrwrpc":        "medicaid_id",
+    "color_mkxsjqjb":       "auth_status",            # Status: Active, No Auth Needed, etc.
+    "text_mkwrb2t9":        "authorization",
+
+    # Order metadata
+    "color_mkwtxw9r":       "order_status",           # Status: where we add "Process Claim"
+    "date_mkwr7spz":        "dos",                    # Order Date (= Date of Service)
+    "color_mkxnxfp0":       "subscription_type",      # Status: Insulin Pump & CGM, etc.
+    "color_mkxn8fwb":       "frequency",              # Status: 60-Day, 90-Day
+    "color_mky4gs76":       "diagnosis_code",         # Status: ICD-10 codes
+
+    # Product quantities (all parent-level)
+    "color_mkxnnhfp":       "pump_type",              # Status: t:slim, Mobi, etc.
+    "numeric_mkwydqmn":     "pump_qty",
+    "color_mkxny0k1":       "infusion_set_1_type",    # Status: AutoSoft 90, TruSteel, etc.
+    "numeric_mktaqs2b":     "infusion_1_qty",
+    "color_mkxnzhdd":       "infusion_set_2_type",    # Status
+    "numeric_mktafnnp":     "infusion_2_qty",
+    "numeric_mkwyatkx":     "monitor_qty",
+    "color_mkxnhjqj":       "cgm_type",               # Status: Dexcom G7, FreeStyle Libre, etc.
+
+    # Tracking
+    "numeric_mkxs3ehj":     "customer_order",
+    "text_mm1g99yk":        "stedi_claim_id",
+}
+
+
+# ============================================================
 # NEW ORDER BOARD — COLUMN MAPPINGS
 # ============================================================
 # The New Order Board is FLAT (no subitems).
