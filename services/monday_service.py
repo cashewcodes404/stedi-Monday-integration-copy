@@ -1261,7 +1261,35 @@ def _write_computed_fields_to_subitem(
         except Exception as e:
             logger.warning(f"  Subitem {product_name}: failed modifiers: {e}")
 
-    # NOTE: claim_qty (formula_mm1cv57q) and est_pay (formula_mm1c7nen)
+    # ── Charge Amount: writable numeric column ──
+    charge_amount = product.get("charge_amount", "")
+    if charge_amount:
+        try:
+            run_query(update_mutation, {
+                "itemId":   str(subitem_id),
+                "boardId":  str(subitem_board_id),
+                "columnId": "numeric_mm1za8v5",  # Charge Amount (writable)
+                "value":    str(charge_amount),
+            })
+            logger.info(f"  Subitem {product_name}: set charge_amount = {charge_amount}")
+        except Exception as e:
+            logger.warning(f"  Subitem {product_name}: failed charge_amount: {e}")
+
+    # ── Est Pay: writable numeric column ──
+    est_pay = product.get("est_pay", "")
+    if est_pay:
+        try:
+            run_query(update_mutation, {
+                "itemId":   str(subitem_id),
+                "boardId":  str(subitem_board_id),
+                "columnId": "numeric_mm1zspsy",  # Est Pay (writable)
+                "value":    str(est_pay),
+            })
+            logger.info(f"  Subitem {product_name}: set est_pay = {est_pay}")
+        except Exception as e:
+            logger.warning(f"  Subitem {product_name}: failed est_pay: {e}")
+
+    # NOTE: claim_qty (formula_mm1cv57q) and est_pay formula (formula_mm1c7nen)
     # are FORMULA columns — read-only, cannot be written via API.
     # They compute automatically from HCPC Code + Primary Insurance +
     # Order Frequency + Order Quantity.
