@@ -888,9 +888,14 @@ async def handle_event(body: dict):
 
     logger.info(f"Status: '{new_label}' | item: {item_id}")
 
+    # "Send to STEDI" ALWAYS routes to Claims Board handler (it's a Claims Board label)
     if new_label == "Send to STEDI":
         is_test = False
-    elif new_label == "Submit Claim":
+        logger.info(f"CLAIMS BOARD: 'Send to STEDI' triggered for item {item_id}")
+        await handle_claims_board_event(item_id, is_test)
+        return
+
+    if new_label == "Submit Claim":
         is_test = False
     elif new_label == "Test Claim Submitted":
         logger.info("Test Claim Submitted triggered")
