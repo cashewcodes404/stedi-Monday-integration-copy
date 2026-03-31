@@ -455,9 +455,15 @@ async def handle_process_order_event(body: dict):
             status_columns["color_mkxq1a2p"] = {"label": secondary_ins}
 
         # Next Order / Order Type — status column (Claims Board: color_mkxwg5s6)
+        # Map New Order Board labels → Claims Board labels
         order_type = cols.get("order_type", "")
         if order_type:
-            status_columns["color_mkxwg5s6"] = {"label": order_type}
+            order_type_map = {
+                "First Order": "1st Order",
+                "Reorder": "Reorder",  # passthrough if exists
+            }
+            claims_order_type = order_type_map.get(order_type, order_type)
+            status_columns["color_mkxwg5s6"] = {"label": claims_order_type}
 
         # Patient Phone (Claims Board: phone_mm1znnww)
         patient_phone = cols.get("phone", "")
