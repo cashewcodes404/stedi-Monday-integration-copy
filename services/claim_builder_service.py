@@ -290,39 +290,3 @@ def format_charge_amounts(payload: dict) -> dict:
             except (ValueError, TypeError):
                 pass
     return payload
-
-# def build_claims_from_monday_item(monday_item: dict) -> list[dict]:
-#     """
-#     Main entry point.
-#     Monday item dict → Stedi claim JSON payloads.
-#     """
-#     item_id = monday_item.get("id")
-#     patient_name = monday_item.get("name")
-#
-#     logger.info(f"Building claims for: {patient_name} (id={item_id})")
-#
-#     # Step 1: Normalize
-#     normalized_orders = monday_item_to_normalized_orders(monday_item)
-#
-#     if not normalized_orders:
-#         logger.warning(f"No normalized orders for item {item_id}")
-#         return []
-#
-#     logger.info(f"Normalized {len(normalized_orders)} service lines")
-#
-#     # Step 2: Group into claims
-#     grouped_claims = group_normalized_orders_into_claims(normalized_orders)
-#     logger.info(f"Grouped into {len(grouped_claims)} claim(s)")
-#
-#     # Step 3: Build Stedi JSON
-#     stedi_payloads = []
-#     for claim in grouped_claims:
-#         try:
-#             payload = build_stedi_claim_json(claim)
-#             stedi_payloads.append(payload)
-#             logger.info(f"Built Stedi payload for: {claim.get('claim_key')}")
-#         except Exception as e:
-#             logger.error(f"Failed to build Stedi JSON: {e}", exc_info=True)
-#
-#     logger.info(f"Total Stedi payloads: {len(stedi_payloads)}")
-#     return stedi_payloads

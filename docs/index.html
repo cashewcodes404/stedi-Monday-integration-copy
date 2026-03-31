@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Medically Modern — Claims Automation Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border-bottom: 1px solid #334155;
+    padding: 24px 40px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header h1 {
+    font-size: 22px;
+    font-weight: 600;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .header .subtitle {
+    font-size: 13px;
+    color: #94a3b8;
+    margin-top: 2px;
+  }
+
+  .badge {
+    background: #065f46;
+    color: #6ee7b7;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 32px 40px;
+  }
+
+  /* Pipeline Flow */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin-bottom: 40px;
+    position: relative;
+  }
+
+  .pipeline-stage {
+    flex: 1;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 24px;
+    position: relative;
+    transition: all 0.5s ease;
+    min-height: 160px;
+  }
+
+  .pipeline-stage.active {
+    border-color: #3b82f6;
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  }
+
+  .pipeline-stage.complete {
+    border-color: #10b981;
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+  }
+
+  .pipeline-stage.error {
+    border-color: #ef4444;
+    box-shadow: 0 0 20px rgba(239, 68, 68, 0.15);
+  }
+
+  .arrow-connector {
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    color: #475569;
+    font-size: 24px;
+    transition: color 0.5s ease;
+  }
+
+  .arrow-connector.lit {
+    color: #3b82f6;
+  }
+
+  .arrow-connector.done {
+    color: #10b981;
+  }
+
+  .stage-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    margin-bottom: 12px;
+  }
+
+  .stage-icon.monday { background: rgba(99, 102, 241, 0.15); }
+  .stage-icon.engine { background: rgba(245, 158, 11, 0.15); }
+  .stage-icon.stedi { background: rgba(16, 185, 129, 0.15); }
+  .stage-icon.era { background: rgba(236, 72, 153, 0.15); }
+  .stage-icon.claims { background: rgba(6, 182, 212, 0.15); }
+
+  .stage-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .stage-desc {
+    font-size: 12px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+
+  .stage-status {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #334155;
+    transition: all 0.3s ease;
+  }
+
+  .stage-status.active {
+    background: #3b82f6;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.6);
+    animation: pulse 1.5s infinite;
+  }
+
+  .stage-status.complete {
+    background: #10b981;
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #1e293b;
+    color: #e2e8f0;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn:hover { background: #334155; border-color: #475569; }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border-color: #3b82f6;
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: linear-gradient(135deg, #60a5fa, #3b82f6);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  }
+
+  .btn-success {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border-color: #10b981;
+    color: white;
+  }
+
+  .btn-success:hover {
+    background: linear-gradient(135deg, #34d399, #10b981);
+  }
+
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* Split layout */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  .panel {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid #334155;
+    font-size: 13px;
+    font-weight: 600;
+    color: #94a3b8;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .panel-body {
+    padding: 16px 20px;
+    max-height: 500px;
+    overflow-y: auto;
+  }
+
+  /* Data table (Monday-style) */
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .data-table th {
+    text-align: left;
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #334155;
+  }
+
+  .data-table td {
+    padding: 10px 12px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+    transition: background 0.3s ease;
+  }
+
+  .data-table tr.highlight td {
+    background: rgba(59, 130, 246, 0.08);
+  }
+
+  .data-table tr.new-row td {
+    animation: rowFlash 1s ease;
+  }
+
+  @keyframes rowFlash {
+    0% { background: rgba(16, 185, 129, 0.2); }
+    100% { background: transparent; }
+  }
+
+  .status-pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .status-pill.submit { background: #dc2626; color: white; }
+  .status-pill.submitted { background: #f59e0b; color: #1e293b; }
+  .status-pill.accepted { background: #10b981; color: white; }
+  .status-pill.outstanding { background: #6366f1; color: white; }
+  .status-pill.review { background: #06b6d4; color: white; }
+  .status-pill.ordered { background: #8b5cf6; color: white; }
+
+  /* JSON viewer */
+  .json-viewer {
+    background: #0f172a;
+    border-radius: 8px;
+    padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    color: #94a3b8;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .json-key { color: #60a5fa; }
+  .json-string { color: #a78bfa; }
+  .json-number { color: #34d399; }
+  .json-bool { color: #f472b6; }
+
+  /* Log stream */
+  .log-stream {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    line-height: 1.8;
+  }
+
+  .log-entry {
+    padding: 2px 0;
+    animation: logFade 0.5s ease;
+  }
+
+  @keyframes logFade {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .log-time { color: #475569; }
+  .log-info { color: #60a5fa; }
+  .log-success { color: #10b981; }
+  .log-warn { color: #f59e0b; }
+  .log-data { color: #a78bfa; }
+
+  /* Board info */
+  .board-ids {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+  }
+
+  .board-id-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 12px 18px;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .board-id-card .label {
+    font-size: 11px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  .board-id-card .value {
+    font-size: 14px;
+    font-weight: 600;
+    font-family: 'SF Mono', monospace;
+  }
+
+  .board-id-card .value.order { color: #f59e0b; }
+  .board-id-card .value.claims { color: #06b6d4; }
+  .board-id-card .value.new-order { color: #8b5cf6; }
+
+  /* Stats bar */
+  .stats {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 32px;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .split { grid-template-columns: 1fr; }
+    .pipeline { flex-direction: column; }
+    .arrow-connector { transform: rotate(90deg); padding: 4px 0; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>Medically Modern — Claims Automation</h1>
+    <div class="subtitle">Stedi + Monday.com Integration Pipeline</div>
+  </div>
+  <div style="display: flex; align-items: center; gap: 12px;">
+    <span class="badge" id="modeBadge">MOCK MODE</span>
+    <span class="badge" style="background: #1e293b; color: #94a3b8; border: 1px solid #334155;" id="timerBadge">00:00</span>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Board IDs -->
+  <div class="board-ids">
+    <div class="board-id-card">
+      <div class="label">Order Board</div>
+      <div class="value order">18204609819</div>
+    </div>
+    <div class="board-id-card">
+      <div class="label">Claims Board</div>
+      <div class="value claims">18245429780</div>
+    </div>
+    <div class="board-id-card">
+      <div class="label">New Order Board</div>
+      <div class="value new-order">18403054769</div>
+    </div>
+    <div class="board-id-card">
+      <div class="label">Status</div>
+      <div class="value" style="color: #10b981;" id="systemStatus">System Ready</div>
+    </div>
+  </div>
+
+  <!-- Pipeline visualization -->
+  <div class="pipeline">
+    <div class="pipeline-stage" id="stage1">
+      <div class="stage-status" id="status1"></div>
+      <div class="stage-icon monday">📋</div>
+      <div class="stage-title">Monday Order Board</div>
+      <div class="stage-desc">Status changed to "Submit Claim"<br>Webhook fires to our API</div>
+    </div>
+    <div class="arrow-connector" id="arrow1">→</div>
+    <div class="pipeline-stage" id="stage2">
+      <div class="stage-status" id="status2"></div>
+      <div class="stage-icon engine">⚙️</div>
+      <div class="stage-title">Claim Builder Engine</div>
+      <div class="stage-desc">Fetches patient data, resolves payer,<br>builds 837P claim JSON</div>
+    </div>
+    <div class="arrow-connector" id="arrow2">→</div>
+    <div class="pipeline-stage" id="stage3">
+      <div class="stage-status" id="status3"></div>
+      <div class="stage-icon stedi">🏥</div>
+      <div class="stage-title">Stedi API</div>
+      <div class="stage-desc">Submits claim to payer clearinghouse<br>Returns claim ID + PCN</div>
+    </div>
+    <div class="arrow-connector" id="arrow3">→</div>
+    <div class="pipeline-stage" id="stage4">
+      <div class="stage-status" id="status4"></div>
+      <div class="stage-icon era">📄</div>
+      <div class="stage-title">277/835 Processing</div>
+      <div class="stage-desc">277 acknowledgement → status update<br>835 ERA → payment parsing</div>
+    </div>
+    <div class="arrow-connector" id="arrow4">→</div>
+    <div class="pipeline-stage" id="stage5">
+      <div class="stage-status" id="status5"></div>
+      <div class="stage-icon claims">💰</div>
+      <div class="stage-title">Claims Board Updated</div>
+      <div class="stage-desc">Payment data, service lines, adjustments<br>written back to Monday</div>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn btn-primary" onclick="runFullDemo()" id="btnDemo">
+      ▶ Run Full Demo
+    </button>
+    <button class="btn btn-success" onclick="runERADemo()" id="btnEra">
+      📄 Simulate 835 ERA
+    </button>
+    <button class="btn" onclick="resetDemo()">
+      ↺ Reset
+    </button>
+  </div>
+
+  <!-- Split panels -->
+  <div class="split">
+    <!-- Left: Monday board simulation -->
+    <div class="panel">
+      <div class="panel-header">📋 Monday.com — Order Board (Live Data Sim)</div>
+      <div class="panel-body">
+        <table class="data-table" id="orderTable">
+          <thead>
+            <tr>
+              <th>Patient</th>
+              <th>Status</th>
+              <th>Payer</th>
+              <th>Product</th>
+              <th>DOS</th>
+              <th>PCN</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr id="orderRow1">
+              <td style="font-weight:600">Brandon Test</td>
+              <td><span class="status-pill ordered" id="orderStatus1">Ordered</span></td>
+              <td>Anthem BCBS</td>
+              <td>Tandem Mobi</td>
+              <td>03/25/2026</td>
+              <td id="orderPcn1" style="font-family:monospace; font-size:11px; color:#64748b">—</td>
+            </tr>
+            <tr>
+              <td style="font-weight:600">Hailey Bazelas</td>
+              <td><span class="status-pill submit">Submit Claim</span></td>
+              <td>United Comm.</td>
+              <td>Dexcom G7</td>
+              <td>03/22/2026</td>
+              <td style="font-family:monospace; font-size:11px; color:#64748b">—</td>
+            </tr>
+            <tr>
+              <td style="font-weight:600">Naomi Mirny</td>
+              <td><span class="status-pill submit">Submit Claim</span></td>
+              <td>Anthem BCBS</td>
+              <td>Insulin Pump</td>
+              <td>03/18/2026</td>
+              <td style="font-family:monospace; font-size:11px; color:#64748b">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Right: Processing log -->
+    <div class="panel">
+      <div class="panel-header">🔧 Processing Log</div>
+      <div class="panel-body">
+        <div class="log-stream" id="logStream">
+          <div class="log-entry">
+            <span class="log-time">[ready]</span> <span class="log-info">System initialized — waiting for trigger</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height: 24px"></div>
+
+  <div class="split">
+    <!-- Left: Claim payload -->
+    <div class="panel">
+      <div class="panel-header">📦 837P Claim Payload (Stedi Format)</div>
+      <div class="panel-body">
+        <div class="json-viewer" id="payloadViewer">
+          <span style="color:#64748b; font-style:italic">// Click "Run Full Demo" to generate claim payload...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Claims Board -->
+    <div class="panel">
+      <div class="panel-header">💰 Monday.com — Claims Board</div>
+      <div class="panel-body">
+        <table class="data-table" id="claimsTable">
+          <thead>
+            <tr>
+              <th>Patient</th>
+              <th>Primary</th>
+              <th>Paid (A)</th>
+              <th>PR (C)</th>
+              <th>Paid Date</th>
+              <th>Check #</th>
+            </tr>
+          </thead>
+          <tbody id="claimsBody">
+            <tr style="opacity: 0.4">
+              <td colspan="6" style="text-align:center; padding:24px; color:#64748b; font-style:italic">
+                Claims will appear here after processing...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // Timer
+  let timerInterval = null;
+  let seconds = 0;
+
+  function startTimer() {
+    seconds = 0;
+    timerInterval = setInterval(() => {
+      seconds++;
+      const m = String(Math.floor(seconds / 60)).padStart(2, '0');
+      const s = String(seconds % 60).padStart(2, '0');
+      document.getElementById('timerBadge').textContent = `${m}:${s}`;
+    }, 1000);
+  }
+
+  function stopTimer() {
+    clearInterval(timerInterval);
+  }
+
+  // Logging
+  function addLog(type, msg) {
+    const stream = document.getElementById('logStream');
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<span class="log-time">[${time}]</span> <span class="log-${type}">${msg}</span>`;
+    stream.appendChild(entry);
+    stream.parentElement.scrollTop = stream.parentElement.scrollHeight;
+  }
+
+  // Stage control
+  function setStage(n, state) {
+    const stage = document.getElementById(`stage${n}`);
+    const status = document.getElementById(`status${n}`);
+    stage.className = `pipeline-stage ${state}`;
+    status.className = `stage-status ${state}`;
+  }
+
+  function setArrow(n, state) {
+    document.getElementById(`arrow${n}`).className = `arrow-connector ${state}`;
+  }
+
+  // Delay helper
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+
+  // Format JSON with syntax highlighting
+  function highlightJSON(obj) {
+    const str = JSON.stringify(obj, null, 2);
+    return str.replace(/"([^"]+)":/g, '<span class="json-key">"$1"</span>:')
+              .replace(/: "([^"]*)"/g, ': <span class="json-string">"$1"</span>')
+              .replace(/: (\d+\.?\d*)/g, ': <span class="json-number">$1</span>')
+              .replace(/: (true|false)/g, ': <span class="json-bool">$1</span>');
+  }
+
+  // Mock claim payload
+  const claimPayload = {
+    tradingPartnerName: "Anthem Blue Cross Blue Shield of New York",
+    tradingPartnerServiceId: "ANTM",
+    submitter: {
+      organizationName: "Mid-Island Medical Supply Company",
+      contactInformation: { name: "Billing Department", phoneNumber: "3475037148" }
+    },
+    receiver: { organizationName: "Anthem BCBS" },
+    subscriber: {
+      memberId: "TEST123456",
+      firstName: "Brandon",
+      lastName: "Test",
+      gender: "M",
+      dateOfBirth: "19940428",
+      address: { address1: "260 W 26th St, N...", city: "New York", state: "NY", postalCode: "100010000" }
+    },
+    billing: {
+      npi: "1234567890",
+      organizationName: "Mid-Island Medical Supply Company",
+      taxonomyCode: "332B00000X"
+    },
+    claimInformation: {
+      patientControlNumber: "BT_20260325_ANTM_001",
+      claimChargeAmount: "4534.80",
+      placeOfServiceCode: "12",
+      claimFrequencyCode: "1",
+      healthCareCodeInformation: [{ diagnosisTypeCode: "ABK", diagnosisCode: "E10.65" }],
+      serviceLines: [
+        {
+          serviceDate: "20260325",
+          professionalService: {
+            procedureCode: "E0784",
+            procedureModifiers: ["NU"],
+            lineItemChargeAmount: "4200.00",
+            serviceUnitCount: "1",
+            compositeDiagnosisCodePointers: { diagnosisCodePointers: ["1"] }
+          }
+        },
+        {
+          serviceDate: "20260325",
+          professionalService: {
+            procedureCode: "A4224",
+            lineItemChargeAmount: "334.80",
+            serviceUnitCount: "3",
+            compositeDiagnosisCodePointers: { diagnosisCodePointers: ["1"] }
+          }
+        }
+      ]
+    }
+  };
+
+  // MAIN DEMO
+  async function runFullDemo() {
+    document.getElementById('btnDemo').disabled = true;
+    document.getElementById('btnEra').disabled = true;
+    startTimer();
+
+    // STAGE 1: Monday webhook fires
+    setStage(1, 'active');
+    addLog('info', 'Monday webhook received — status changed to "Submit Claim"');
+    addLog('data', 'pulseId: 99999 | pulseName: "Brandon Test"');
+
+    const statusEl = document.getElementById('orderStatus1');
+    statusEl.textContent = 'Submit Claim';
+    statusEl.className = 'status-pill submit';
+    document.getElementById('orderRow1').className = 'highlight';
+
+    await wait(1500);
+    setStage(1, 'complete');
+    setArrow(1, 'lit');
+
+    // STAGE 2: Build claim
+    setStage(2, 'active');
+    addLog('info', 'Fetching order item from Monday API...');
+    await wait(800);
+    addLog('success', 'Fetched: Brandon Test (id=99999)');
+    addLog('data', 'Normalized: CGM Sensors | Anthem BCBS Commercial | member=TEST123456');
+    addLog('data', 'Normalized: Insulin Pump | Anthem BCBS Commercial | qty=1');
+    await wait(600);
+    addLog('info', 'Resolving payer: Anthem BCBS Commercial → payer_id=803');
+    addLog('info', 'tradingPartnerName: "Anthem Blue Cross Blue Shield of New York"');
+    await wait(600);
+    addLog('success', 'Built 1 claim payload with 2 service lines');
+    addLog('data', 'Line 1: E0784 (Insulin Pump) — $4,200.00 x 1 unit [NU]');
+    addLog('data', 'Line 2: A4224 (Infusion Set) — $334.80 x 3 units');
+
+    // Show payload
+    document.getElementById('payloadViewer').innerHTML = highlightJSON(claimPayload);
+
+    await wait(1000);
+    setStage(2, 'complete');
+    setArrow(2, 'done');
+
+    // STAGE 3: Submit to Stedi
+    setStage(3, 'active');
+    setArrow(2, 'lit');
+    addLog('info', 'Submitting claim to Stedi API...');
+    await wait(1500);
+
+    const pcn = 'BT_20260325_ANTM_001';
+    const claimId = 'CLM_A8F2E91B3C4D';
+
+    addLog('success', `Stedi response: claim_id=${claimId}`);
+    addLog('success', `PCN stored: ${pcn}`);
+
+    document.getElementById('orderPcn1').textContent = pcn;
+    document.getElementById('orderPcn1').style.color = '#10b981';
+
+    statusEl.textContent = 'Submitted';
+    statusEl.className = 'status-pill submitted';
+
+    await wait(1000);
+    setStage(3, 'complete');
+    setArrow(3, 'done');
+
+    // STAGE 4: 277 Acknowledgement
+    setStage(4, 'active');
+    addLog('info', '277CA webhook received from Stedi...');
+    await wait(1200);
+    addLog('success', '277 Status: ACCEPTED ✓');
+    addLog('data', 'Category: A1 (Acknowledgement)');
+
+    statusEl.textContent = 'Accepted';
+    statusEl.className = 'status-pill accepted';
+
+    await wait(1500);
+
+    // 835 ERA
+    addLog('info', '835 ERA webhook received from Stedi...');
+    await wait(800);
+    addLog('info', 'Parsing ERA payment data...');
+    await wait(600);
+    addLog('success', 'Parsed: 2 service lines');
+    addLog('data', 'Primary Paid: $4,084.80 | PR Amount: $450.00 | Check #: CHK991234');
+    addLog('data', 'Line 1 (E0784): Paid $3,780.00 | CO-45: $420.00');
+    addLog('data', 'Line 2 (A4224): Paid $304.80 | PR-3: $30.00');
+
+    await wait(1000);
+    setStage(4, 'complete');
+    setArrow(4, 'done');
+
+    // STAGE 5: Claims Board updated
+    setStage(5, 'active');
+    addLog('info', 'Writing ERA data to Claims Board...');
+    await wait(800);
+
+    // Populate claims board
+    document.getElementById('claimsBody').innerHTML = `
+      <tr class="new-row">
+        <td style="font-weight:600">Brandon Test</td>
+        <td><span class="status-pill review">Review</span></td>
+        <td style="color:#10b981; font-weight:600">$4,084.80</td>
+        <td style="color:#f59e0b">$450.00</td>
+        <td>03/30/2026</td>
+        <td style="font-family:monospace; font-size:11px">CHK991234</td>
+      </tr>
+    `;
+
+    addLog('success', 'Claims Board item created: Brandon Test - Anthem BCBS');
+    addLog('success', 'Primary Status → "Review"');
+    addLog('success', 'Primary ERA Date → 2026-03-30');
+    addLog('success', '2 service line subitems created with full ERA breakdown');
+
+    await wait(800);
+    setStage(5, 'complete');
+
+    addLog('success', '━━━ PIPELINE COMPLETE ━━━');
+    addLog('info', `Total processing time: ${seconds}s`);
+
+    document.getElementById('systemStatus').textContent = 'Pipeline Complete';
+    document.getElementById('modeBadge').textContent = 'DEMO COMPLETE';
+    document.getElementById('modeBadge').style.background = '#1e40af';
+    document.getElementById('modeBadge').style.color = '#93c5fd';
+
+    stopTimer();
+    document.getElementById('btnDemo').disabled = false;
+    document.getElementById('btnEra').disabled = false;
+  }
+
+  // ERA-only demo
+  async function runERADemo() {
+    document.getElementById('btnEra').disabled = true;
+    startTimer();
+
+    setStage(4, 'active');
+    addLog('info', 'Simulating 835 ERA webhook...');
+    await wait(1000);
+
+    addLog('data', 'Transaction ID: TXN_835_DEMO_001');
+    addLog('info', 'Fetching ERA from Stedi...');
+    await wait(800);
+
+    const eraData = {
+      claimPaymentAmount: "1125.00",
+      patientControlNumber: "DEMO_PCN_12345",
+      totalClaimChargeAmount: "1500.00",
+      patientResponsibilityAmount: "375.00",
+      paidDate: "2026-03-30",
+      checkNumber: "CHK887766",
+      serviceLines: [
+        { procedureCode: "K0553", paid: "$525.00", charge: "$700.00", pr: "$175.00", adjustments: "CO-45: $0.00" },
+        { procedureCode: "A4239", paid: "$600.00", charge: "$800.00", pr: "$200.00", adjustments: "CO-45: $0.00" }
+      ]
+    };
+
+    addLog('success', 'ERA parsed successfully');
+    addLog('data', `Primary Paid: $1,125.00 | PR: $375.00 | Check: CHK887766`);
+    addLog('data', 'Line 1: K0553 (CGM Sensors) — Paid $525.00');
+    addLog('data', 'Line 2: A4239 (Cartridge) — Paid $600.00');
+
+    await wait(1000);
+    setStage(4, 'complete');
+    setStage(5, 'active');
+
+    addLog('info', 'Writing to Claims Board...');
+    await wait(800);
+
+    const claimsBody = document.getElementById('claimsBody');
+    const existing = claimsBody.innerHTML;
+    const newRow = `
+      <tr class="new-row">
+        <td style="font-weight:600">ERA Demo Patient</td>
+        <td><span class="status-pill review">Review</span></td>
+        <td style="color:#10b981; font-weight:600">$1,125.00</td>
+        <td style="color:#f59e0b">$375.00</td>
+        <td>03/30/2026</td>
+        <td style="font-family:monospace; font-size:11px">CHK887766</td>
+      </tr>
+    `;
+
+    if (existing.includes('Claims will appear')) {
+      claimsBody.innerHTML = newRow;
+    } else {
+      claimsBody.innerHTML += newRow;
+    }
+
+    addLog('success', 'Claims Board updated with ERA data');
+    addLog('success', '━━━ ERA PROCESSING COMPLETE ━━━');
+
+    setStage(5, 'complete');
+    stopTimer();
+    document.getElementById('btnEra').disabled = false;
+  }
+
+  // Reset
+  function resetDemo() {
+    stopTimer();
+    seconds = 0;
+    document.getElementById('timerBadge').textContent = '00:00';
+    document.getElementById('modeBadge').textContent = 'MOCK MODE';
+    document.getElementById('modeBadge').style.background = '#065f46';
+    document.getElementById('modeBadge').style.color = '#6ee7b7';
+    document.getElementById('systemStatus').textContent = 'System Ready';
+
+    for (let i = 1; i <= 5; i++) {
+      setStage(i, '');
+      if (i < 5) setArrow(i, '');
+    }
+
+    document.getElementById('orderStatus1').textContent = 'Ordered';
+    document.getElementById('orderStatus1').className = 'status-pill ordered';
+    document.getElementById('orderRow1').className = '';
+    document.getElementById('orderPcn1').textContent = '—';
+    document.getElementById('orderPcn1').style.color = '#64748b';
+
+    document.getElementById('payloadViewer').innerHTML = '<span style="color:#64748b; font-style:italic">// Click "Run Full Demo" to generate claim payload...</span>';
+
+    document.getElementById('claimsBody').innerHTML = `
+      <tr style="opacity: 0.4">
+        <td colspan="6" style="text-align:center; padding:24px; color:#64748b; font-style:italic">
+          Claims will appear here after processing...
+        </td>
+      </tr>
+    `;
+
+    document.getElementById('logStream').innerHTML = `
+      <div class="log-entry">
+        <span class="log-time">[ready]</span> <span class="log-info">System initialized — waiting for trigger</span>
+      </div>
+    `;
+
+    document.getElementById('btnDemo').disabled = false;
+    document.getElementById('btnEra').disabled = false;
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "M1": "X-ray not taken within the prescribed time frames",
+  "M15": "Separately billed services/tests have been bundled as they are considered components of the same procedure",
+  "M20": "Missing/incomplete/invalid HCPCS",
+  "M76": "Missing/incomplete/invalid diagnosis or condition",
+  "N30": "Patient ineligible for this service",
+  "N95": "This provider type/provider specialty may not bill this service",
+  "N362": "The number of Days or Units of Service exceeds our acceptable maximum",
+  "N386": "This decision was based on a Local Coverage Determination (LCD)",
+  "N432": "Alert: Adjustment based on a Recovery Audit",
+  "N519": "Invalid/incomplete/missing adjustment reason description",
+  "N657": "This should be billed with the appropriate code for the device/drug/service provided",
+  "N790": "Missing/incomplete/invalid pre-authorization number",
+  "MA01": "Alert: If you do not agree with what we approved for these services, you may appeal our decision",
+  "MA04": "Secondary payment cannot be considered without the identity of or payment information from the primary payer",
+  "MA07": "The claim information has also been forwarded to Medicaid for review",
+  "MA13": "Alert: You may be subject to penalties if you bill the patient for amounts not reported with the PR group code",
+  "MA130": "Your claim contains incomplete and/or invalid information"
+}

@@ -1036,6 +1036,32 @@ def build_stedi_claim_json(grouped_claim: dict) -> dict:
     claim_json["claimInformation"]["placeOfServiceCode"] = safe_str(grouped_claim.get("place_of_service_code", ""))
     claim_json["claimInformation"]["healthCareCodeInformation"][0]["diagnosisCode"] = diagnosis_code
 
+    # Referring provider (ordering physician)
+    doctor_npi = safe_str(grouped_claim.get("doctor_npi", ""))
+    doctor_first = safe_str(grouped_claim.get("doctor_first_name", ""))
+    doctor_last = safe_str(grouped_claim.get("doctor_last_name", ""))
+
+    if doctor_npi and doctor_last:
+        referring = {
+            "providerType": "ReferringProvider",
+            "npi": doctor_npi,
+            "firstName": doctor_first,
+            "lastName": doctor_last,
+        }
+        # Add address if available
+        doc_addr1 = safe_str(grouped_claim.get("doctor_address_1", ""))
+        doc_city = safe_str(grouped_claim.get("doctor_city", ""))
+        doc_state = safe_str(grouped_claim.get("doctor_state", ""))
+        doc_zip = safe_str(grouped_claim.get("doctor_postal_code", ""))
+        if doc_addr1 and doc_city and doc_state and doc_zip:
+            referring["address"] = {
+                "address1": doc_addr1,
+                "city": doc_city,
+                "state": doc_state,
+                "postalCode": doc_zip,
+            }
+        claim_json["referring"] = referring
+
     service_lines = []
     for line in grouped_claim.get("service_lines", []):
         service_lines.append({

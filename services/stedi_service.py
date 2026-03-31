@@ -3,6 +3,7 @@ services/stedi_service.py
 """
 
 import os
+import json
 import logging
 import requests
 from dotenv import load_dotenv
@@ -10,6 +11,12 @@ from functools import lru_cache
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+def is_mock_mode() -> bool:
+    """Check if running without real API keys (mock mode)."""
+    return not os.getenv("STEDI_API_KEY")
+
 
 # Correct URL from Stedi docs
 STEDI_BASE_URL = "https://healthcare.us.stedi.com/2024-04-01"
@@ -72,76 +79,9 @@ def lookup_payer_name(payer_id: str) -> str:
         logger.error(f"Payer lookup failed for id={payer_id}: {e}")
         return ""
 
-import json
-
-# def submit_claim(payload: dict) -> dict:
-#     """
-#     Submit a claim JSON to Stedi API.
-#     Returns claim_id and transaction_id.
-#     """
-#     payer = payload.get("tradingPartnerName", "Unknown")
-#     logger.info(f"Submitting claim to Stedi: payer={payer}")
-#
-#     logger.info(f"STEDI CLAIM PAYLOAD:\n{json.dumps(payload, indent=2)}")
-#     # Return mock if no API key yet
-#     if not os.getenv("STEDI_API_KEY"):
-#         logger.warning("STEDI_API_KEY not set — returning mock response")
-#         return {
-#             "claim_id": "MOCK_CLAIM_123",
-#             "transaction_id": "MOCK_TXN_456",
-#             "status": "mock_submitted",
-#         }
-#
-#     # Use patientControlNumber as idempotency key to prevent duplicates
-#     patient_control_number = (
-#         payload.get("claimInformation", {})
-#         .get("patientControlNumber", "")
-#     )
-#
-#     try:
-#         response = requests.post(
-#             STEDI_CLAIMS_URL,
-#             json=payload,
-#             headers=get_stedi_headers(idempotency_key=patient_control_number),
-#             timeout=30,
-#         )
-#
-#         logger.info(f"Stedi response status: {response.status_code}")
-#
-#         response.raise_for_status()
-#         result = response.json()
-#
-#         # Extract claim identifiers from response
-#         claim_id = (
-#             result.get("claimReference", {}).get("claimId") or
-#             result.get("id") or
-#             result.get("transactionId") or
-#             ""
-#         )
-#         transaction_id = (
-#             result.get("claimReference", {}).get("transactionId") or
-#             result.get("transactionId") or
-#             ""
-#         )
-#
-#         logger.info(f"Claim submitted: claim_id={claim_id}, transaction_id={transaction_id}")
-#
-#         return {
-#             "claim_id": claim_id,
-#             "transaction_id": transaction_id,
-#             "status": "submitted",
-#             "raw": result,
-#         }
-#
-#     except requests.exceptions.HTTPError as e:
-#         logger.error(f"Stedi HTTP error: {e.response.status_code} - {e.response.text}")
-#         raise
-#     except Exception as e:
-#         logger.error(f"Stedi submission failed: {e}", exc_info=True)
-#         raise
 
 def submit_claim(payload: dict) -> dict:
-    """Submit a claim JSON to Stedi API."""
+    """Submit a claim JSON to Stedi API. Returns mock response if no API key."""
     payer = payload.get("tradingPartnerName", "Unknown")
     logger.info(f"Submitting claim: payer={payer}")
 
@@ -149,6 +89,19 @@ def submit_claim(payload: dict) -> dict:
         payload.get("claimInformation", {})
         .get("patientControlNumber", "")
     )
+
+    if is_mock_mode():
+        import uuid
+        mock_id = f"MOCK_{uuid.uuid4().hex[:12].upper()}"
+        logger.info(f"MOCK MODE: Returning mock response for payer={payer}")
+        return {
+            "claim_id": mock_id,
+            "transaction_id": f"MOCK_TXN_{uuid.uuid4().hex[:8].upper()}",
+            "patient_control_number": patient_control_number,
+            "inline_277_status": "Accepted",
+            "status": "mock_submitted",
+            "raw": {"mock": True},
+        }
 
     try:
         response = requests.post(
@@ -160,13 +113,10 @@ def submit_claim(payload: dict) -> dict:
 
         logger.info(f"Stedi response status: {response.status_code}")
         result = response.json()
-
-        # Log full response to find exact claim_id field
         logger.info(f"Stedi full response: {json.dumps(result, indent=2)}")
 
         response.raise_for_status()
 
-        # Try every possible location for claim ID
         claim_id = (
                 result.get("claimReference", {}).get("correlationId") or
                 result.get("claimReference", {}).get("claimId") or
@@ -198,7 +148,6 @@ def submit_claim(payload: dict) -> dict:
         logger.error(f"Stedi submission failed: {e}", exc_info=True)
         raise
 
-STEDI_PAYER_SEARCH_URL = "https://payers.us.stedi.com/2024-04-01/payers/search"
 @lru_cache(maxsize=256)
 def lookup_payer_name_by_internal(internal_name: str) -> str:
     """
@@ -294,54 +243,6 @@ def get_277_acknowledgement(claim_id: str) -> dict:
         "raw": {},
     }
 
-# def get_277_acknowledgement(claim_id: str) -> dict:
-#     """
-#     Get 277 acknowledgement for a submitted claim.
-#     Returns status: Accepted or Rejected.
-#     """
-#     logger.info(f"Getting 277 for claim_id={claim_id}")
-#
-#     if not os.getenv("STEDI_API_KEY") or claim_id.startswith("MOCK_"):
-#         logger.warning("Returning mock 277 response")
-#         return {
-#             "status": "Accepted",
-#             "rejection_reason": "",
-#             "raw": {},
-#         }
-#
-#     try:
-#         response = requests.get(
-#             f"{STEDI_BASE_URL}/reports/277/{claim_id}",
-#             headers=get_stedi_headers(),
-#             timeout=30,
-#         )
-#         response.raise_for_status()
-#         result = response.json()
-#
-#         ack_status = result.get("acknowledgementStatus", "Unknown")
-#         rejection_reason = result.get("rejectionReason", "")
-#
-#         if "accept" in ack_status.lower():
-#             status = "Accepted"
-#         elif "reject" in ack_status.lower():
-#             status = "Rejected"
-#         else:
-#             status = ack_status
-#
-#         logger.info(f"277 status: {status}")
-#         return {
-#             "status": status,
-#             "rejection_reason": rejection_reason,
-#             "raw": result,
-#         }
-#
-#     except requests.exceptions.HTTPError as e:
-#         logger.error(f"277 error: {e.response.status_code} - {e.response.text}")
-#         raise
-#     except Exception as e:
-#         logger.error(f"277 fetch failed: {e}", exc_info=True)
-#         raise
-
 def parse_inline_277_status(result: dict) -> str:
     """
     Parse 277 acknowledgement status from the x12 field in the submission response.
@@ -366,6 +267,32 @@ def get_277_report(transaction_id: str) -> dict:
     Fetch 277CA acknowledgement report by transaction ID.
     Called after Stedi sends transaction.processed.v2 event with transactionSetIdentifier=277
     """
+    if is_mock_mode():
+        logger.info(f"MOCK MODE: Returning mock 277 report for {transaction_id}")
+        return {
+            "transactions": [{
+                "payers": [{
+                    "claimStatusTransactions": [{
+                        "claimStatusDetails": [{
+                            "patientClaimStatusDetails": [{
+                                "claims": [{
+                                    "patientAccountNumber": "MOCK_PCN",
+                                    "claimStatus": {
+                                        "informationClaimStatuses": [{
+                                            "informationStatuses": [{
+                                                "healthCareClaimStatusCategoryCode": "A1",
+                                                "statusCodeValue": "Accepted"
+                                            }]
+                                        }]
+                                    }
+                                }]
+                            }]
+                        }]
+                    }]
+                }]
+            }]
+        }
+
     logger.info(f"Fetching 277 report: transaction_id={transaction_id}")
     try:
         response = requests.get(
@@ -387,6 +314,41 @@ def get_era_as_835_file(transaction_id: str) -> str:
     Fetch 835 ERA report by transaction ID.
     Called after Stedi sends transaction.processed.v2 event with transactionSetIdentifier=835
     """
+    if is_mock_mode():
+        import json
+        logger.info(f"MOCK MODE: Returning mock 835 ERA for {transaction_id}")
+        return json.dumps({
+            "transactions": [{
+                "financialInformation": {"checkIssueOrEFTEffectiveDate": "20260315"},
+                "paymentAndRemitReassociationDetails": {"checkOrEFTTraceNumber": "MOCK_CHK_001"},
+                "detailInfo": [{
+                    "paymentInfo": [{
+                        "claimPaymentInfo": {
+                            "patientControlNumber": "MOCK_PCN",
+                            "claimStatusCode": "1",
+                            "claimPaymentAmount": "450.00",
+                            "patientResponsibilityAmount": "50.00",
+                            "totalClaimChargeAmount": "500.00",
+                            "payerClaimControlNumber": "MOCK_PAYER_001",
+                        },
+                        "serviceLines": [{
+                            "servicePaymentInformation": {
+                                "adjudicatedProcedureCode": "A4239",
+                                "lineItemProviderPaymentAmount": "450.00",
+                                "lineItemChargeAmount": "500.00",
+                            },
+                            "serviceSupplementalAmounts": {"allowedActual": "500.00"},
+                            "serviceDate": "20260316",
+                            "lineItemControlNumber": "MOCKLINE001",
+                            "serviceAdjustments": [],
+                            "healthCareCheckRemarkCodes": [],
+                        }],
+                        "patientName": {"firstName": "John", "lastName": "TestPatient"},
+                    }]
+                }]
+            }]
+        })
+
     logger.info(f"Fetching 835 ERA: transaction_id={transaction_id}")
     try:
         headers = get_stedi_headers()
@@ -402,30 +364,3 @@ def get_era_as_835_file(transaction_id: str) -> str:
     except Exception as e:
         logger.error(f"835 fetch failed: {e}", exc_info=True)
         raise
-
-# def get_era_as_835_file(era_id: str) -> str:
-#     """
-#     Fetch raw 835 ERA content from Stedi.
-#     Returns raw EDI string.
-#     """
-#     logger.info(f"Fetching 835 for era_id={era_id}")
-#
-#     if not os.getenv("STEDI_API_KEY"):
-#         logger.warning("STEDI_API_KEY not set — returning empty 835")
-#         return ""
-#
-#     try:
-#         response = requests.get(
-#             f"{STEDI_835_URL}/{era_id}",
-#             headers=get_stedi_headers(),
-#             timeout=30,
-#         )
-#         response.raise_for_status()
-#         return response.text
-#
-#     except requests.exceptions.HTTPError as e:
-#         logger.error(f"835 fetch error: {e.response.status_code} - {e.response.text}")
-#         raise
-#     except Exception as e:
-#         logger.error(f"835 fetch failed: {e}", exc_info=True)
-#         raise

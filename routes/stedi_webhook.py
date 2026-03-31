@@ -23,83 +23,11 @@ from services.era_parser_service import (
     summarize_era_row_for_monday,
 )
 from services.monday_service import populate_era_data_on_claims_item
-from services.monday_service import run_query
 from services.stedi_service import get_era_as_835_file, get_277_report
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Stedi Webhook"])
 
-
-# @router.post("/webhook")
-# async def stedi_webhook(request: Request, background_tasks: BackgroundTasks):
-#     """
-#     Receives Stedi transaction.processed.v2 events.
-#     Stedi wraps events in AWS SQS Records format:
-#     {
-#       "event": {
-#         "Records": [{
-#           "body": {
-#             "detail-type": "transaction.processed.v2",
-#             "detail": { "transactionId": "...", "x12": {...} }
-#           }
-#         }]
-#       }
-#     }
-#     """
-#     body: Dict[str, Any] = await request.json()
-#     logger.info(f"Stedi webhook raw payload: {body}")
-#
-#     # Extract records from SQS wrapper
-#     records = (
-#         body.get("event", {}).get("Records", []) or
-#         body.get("Records", []) or
-#         []
-#     )
-#
-#     if not records:
-#         # Try direct event format (non-SQS)
-#         records = [{"body": body}]
-#
-#     for record in records:
-#         record_body = record.get("body", {})
-#         if isinstance(record_body, str):
-#             import json
-#             record_body = json.loads(record_body)
-#         background_tasks.add_task(handle_stedi_event, record_body)
-#
-#     return JSONResponse({"status": "received"}, status_code=200)
-#
-# async def handle_stedi_event(event: dict) -> None:
-#     """Process a single Stedi event"""
-#
-#     event_id   = event.get("id", "")
-#     event_type = event.get("detail-type", "")
-#     detail     = event.get("detail", {})
-#
-#     logger.info(f"Stedi event: id={event_id} | type={event_type}")
-#
-#     if event_type != "transaction.processed.v2":
-#         logger.info(f"Ignored event type: {event_type}")
-#         return
-#
-#     transaction_id = detail.get("transactionId", "")
-#
-#     # Get transaction set identifier — can be int or string
-#     tx_set = str(
-#         detail.get("x12", {})
-#         .get("metadata", {})
-#         .get("transaction", {})
-#         .get("transactionSetIdentifier", "")
-#     )
-#
-#     logger.info(f"Transaction: id={transaction_id} | set={tx_set}")
-#
-#     if tx_set == "277":
-#         await handle_277_event(transaction_id, detail)
-#     elif tx_set == "835":
-#         await handle_835_event(transaction_id, detail)
-#     else:
-#         logger.info(f"Unhandled transaction set: {tx_set}")
 
 @router.post("/webhook")
 async def stedi_webhook(request: Request, background_tasks: BackgroundTasks):
@@ -223,89 +151,15 @@ def parse_277_status(report: dict) -> tuple:
         logger.error(f"[277] parse failed: {e}")
         return "Unknown", "", ""
 
-#
-# def find_order_item_by_pcn(patient_control_number: str) -> str:
-#     """
-#     Find Order Board item by patientControlNumber.
-#     PCN is stored in the Order Board when claim is submitted.
-#     We need to search by it.
-#     """
-#     from services.monday_service import run_query
-#     import os
-#
-#     board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
-#     if not board_id or not patient_control_number:
-#         return ""
-#
-#     # Search all items for matching PCN
-#     query = """
-#     query FindItem($boardId: ID!) {
-#       boards(ids: [$boardId]) {
-#         items_page(limit: 200) {
-#           items {
-#             id
-#             name
-#             column_values { id text }
-#           }
-#         }
-#       }
-#     }
-#     """
-#     try:
-#         result = run_query(query, {"boardId": board_id})
-#         items = (
-#             result.get("data", {})
-#             .get("boards", [{}])[0]
-#             .get("items_page", {})
-#             .get("items", [])
-#         )
-#         for item in items:
-#             for col in item.get("column_values", []):
-#                 # if col.get("text") == patient_control_number:
-#                 if col.get("id") == "text_mm1ra2v1" and col.get("text") == patient_control_number:
-#                     logger.info(f"Found Order item {item['id']} for PCN={patient_control_number}")
-#                     return item["id"]
-#     except Exception as e:
-#         logger.error(f"Order item search failed: {e}")
-#     return ""
 
 def find_order_item_by_pcn(patient_control_number: str) -> str:
+    """Find Order Board item by patient control number (paginated)."""
+    from services.monday_service import search_board_items
     board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
-    if not board_id or not patient_control_number:
-        return ""
-
-    query = """
-    query FindItem($boardId: ID!) {
-      boards(ids: [$boardId]) {
-        items_page(limit: 200) {
-          items {
-            id
-            name
-            column_values { id text }
-          }
-        }
-      }
-    }
-    """
-    try:
-        result = run_query(query, {"boardId": board_id})
-        items = (
-            result.get("data", {})
-            .get("boards", [{}])[0]
-            .get("items_page", {})
-            .get("items", [])
-        )
-        for item in items:
-            for col in item.get("column_values", []):
-                if col.get("id") == "text_mm1ra2v1":
-                    # ── Support comma-separated PCNs for multi-claim orders ──
-                    stored_pcns = [v.strip() for v in (col.get("text") or "").split(",")]
-                    if patient_control_number in stored_pcns:
-                        logger.info(f"Found Order item {item['id']} for PCN={patient_control_number}")
-                        return item["id"]
-    except Exception as e:
-        logger.error(f"Order item search failed: {e}")
-    return ""
+    item_id = search_board_items(board_id, "text_mm1ra2v1", patient_control_number)
+    if item_id:
+        logger.info(f"Found Order item {item_id} for PCN={patient_control_number}")
+    return item_id
 
 async def handle_835_event(transaction_id: str, detail: dict) -> None:
     """
@@ -367,39 +221,13 @@ async def handle_835_event(transaction_id: str, detail: dict) -> None:
 
 
 def _find_claims_item_by_pcn(patient_control_num: str) -> str:
-    """Find Claims Board item by patient control number stored in text_mkwzbcme"""
+    """Find Claims Board item by patient control number (paginated)."""
+    from services.monday_service import search_board_items
     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
-    if not claims_board_id or not patient_control_num:
-        return ""
-
-    query = """
-    query FindItem($boardId: ID!) {
-      boards(ids: [$boardId]) {
-        items_page(limit: 200) {
-          items {
-            id
-            column_values { id text }
-          }
-        }
-      }
-    }
-    """
-    try:
-        result = run_query(query, {"boardId": claims_board_id})
-        items = (
-            result.get("data", {})
-            .get("boards", [{}])[0]
-            .get("items_page", {})
-            .get("items", [])
-        )
-        for item in items:
-            for col in item.get("column_values", []):
-                if col.get("id") == "text_mkwzbcme" and col.get("text") == patient_control_num:
-                    logger.info(f"Found Claims Board item {item['id']} for pcn={patient_control_num}")
-                    return item["id"]
-    except Exception as e:
-        logger.error(f"Claims Board search failed: {e}")
-    return ""
+    item_id = search_board_items(claims_board_id, "text_mkwzbcme", patient_control_num)
+    if item_id:
+        logger.info(f"Found Claims Board item {item_id} for pcn={patient_control_num}")
+    return item_id
 
 async def process_era_response(
     era_id: str,
@@ -453,78 +281,19 @@ async def process_era_response(
 
 
 def _find_claims_item_by_claim_id(claim_id: str) -> str:
-    """
-    Search the Monday Claims Board for the item whose
-    'text_stedi_claim_id' column matches the given claim_id.
-    """
+    """Find Claims Board item by Stedi claim_id (paginated)."""
+    from services.monday_service import search_board_items
     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
-
-    query = """
-    query FindClaimsItem($boardId: ID!) {
-      boards(ids: [$boardId]) {
-        items_page(limit: 200) {
-          items {
-            id
-            column_values { id text }
-          }
-        }
-      }
-    }
-    """
-    try:
-        result = run_query(query, {"boardId": claims_board_id})
-        items = (
-            result.get("data", {})
-            .get("boards", [{}])[0]
-            .get("items_page", {})
-            .get("items", [])
-        )
-        for item in items:
-            for col in item.get("column_values", []):
-                if col.get("id") == "text_stedi_claim_id" and col.get("text") == claim_id:
-                    return item["id"]
-    except Exception as e:
-        logger.error(f"Error searching Claims Board: {e}")
-
-    return ""
+    return search_board_items(claims_board_id, "text_stedi_claim_id", claim_id)
 
 def _find_claims_item_by_correlation_id(correlation_id: str) -> str:
-    """Find Claims Board item by Stedi correlationId stored in text_mkwzbcme"""
-    from services.monday_service import run_query
-    import os
-
+    """Find Claims Board item by Stedi correlationId (paginated)."""
+    from services.monday_service import search_board_items
     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
-    if not claims_board_id or not correlation_id:
-        return ""
-
-    query = """
-    query FindItem($boardId: ID!) {
-      boards(ids: [$boardId]) {
-        items_page(limit: 200) {
-          items {
-            id
-            column_values { id text }
-          }
-        }
-      }
-    }
-    """
-    try:
-        result = run_query(query, {"boardId": claims_board_id})
-        items = (
-            result.get("data", {})
-            .get("boards", [{}])[0]
-            .get("items_page", {})
-            .get("items", [])
-        )
-        for item in items:
-            for col in item.get("column_values", []):
-                if col.get("id") == "text_mkwzbcme" and col.get("text") == correlation_id:
-                    logger.info(f"Found Claims item {item['id']} by correlationId={correlation_id}")
-                    return item["id"]
-    except Exception as e:
-        logger.error(f"Claims Board search failed: {e}")
-    return ""
+    item_id = search_board_items(claims_board_id, "text_mkwzbcme", correlation_id)
+    if item_id:
+        logger.info(f"Found Claims item {item_id} by correlationId={correlation_id}")
+    return item_id
 
 @router.post("/277")
 async def stedi_277_webhook(request: Request, background_tasks: BackgroundTasks):

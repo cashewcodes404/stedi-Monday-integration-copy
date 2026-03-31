@@ -1,0 +1,95 @@
+{
+  "codes": {
+    "CO4": {
+      "description": "The procedure code is inconsistent with the modifier used or a required modifier is missing",
+      "triage_bucket": "Resubmit",
+      "action_required": true,
+      "recommended_action": "Review procedure code and modifiers for accuracy, then resubmit"
+    },
+    "CO16": {
+      "description": "Claim/service lacks information or has submission/billing error(s)",
+      "triage_bucket": "Resubmit",
+      "action_required": true,
+      "recommended_action": "Review claim for missing or incorrect information and resubmit"
+    },
+    "CO18": {
+      "description": "Exact duplicate claim/service",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "No action needed — duplicate claim"
+    },
+    "CO45": {
+      "description": "Charge exceeds fee schedule/maximum allowable or contracted/legislated fee arrangement",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Contractual adjustment — no action needed"
+    },
+    "CO97": {
+      "description": "The benefit for this service is included in the payment/allowance for another service/procedure that has already been adjudicated",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Bundled service — review if unbundling is appropriate"
+    },
+    "CO151": {
+      "description": "Payment adjusted because the payer deems the information submitted does not support this many/frequency of services",
+      "triage_bucket": "Resubmit",
+      "action_required": true,
+      "recommended_action": "Review service frequency and submit supporting documentation"
+    },
+    "CO253": {
+      "description": "Sequestration — Loss is the responsibility of the provider",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Sequestration reduction — no action possible"
+    },
+    "PR1": {
+      "description": "Deductible amount",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Bill patient for deductible"
+    },
+    "PR2": {
+      "description": "Coinsurance amount",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Bill patient for coinsurance"
+    },
+    "PR3": {
+      "description": "Co-payment amount",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Bill patient for copay"
+    },
+    "PR96": {
+      "description": "Patient-related concerns",
+      "triage_bucket": "Payer Issue - contact payer",
+      "action_required": true,
+      "recommended_action": "Contact payer for clarification on patient-related denial"
+    },
+    "OA23": {
+      "description": "Impact of prior payer(s) adjudication including payments and/or adjustments",
+      "triage_bucket": "No action",
+      "action_required": false,
+      "recommended_action": "Coordination of benefits adjustment — review secondary payer"
+    },
+    "N790": {
+      "description": "Missing/incomplete/invalid pre-authorization number",
+      "triage_bucket": "Resubmit",
+      "action_required": true,
+      "recommended_action": "Obtain valid prior authorization and resubmit",
+      "medicaid_as_secondary": false
+    },
+    "N30": {
+      "description": "Patient ineligible for this service",
+      "triage_bucket": "Resubmit",
+      "action_required": true,
+      "recommended_action": "Verify patient eligibility and coverage, then resubmit or appeal"
+    },
+    "MA130": {
+      "description": "Your claim contains incomplete and/or invalid information",
+      "triage_bucket": "Resubmit",
+      "action_required": true,
+      "recommended_action": "Review claim for completeness and resubmit with corrected information"
+    }
+  }
+}

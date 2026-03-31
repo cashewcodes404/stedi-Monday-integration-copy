@@ -1,11 +1,33 @@
 import logging
 import json
+import time
 from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from services.monday_service import get_order_item, update_277_status, create_claims_board_item, update_claim_status, post_claim_update_to_monday, store_claim_pcn
 
 from services.claim_builder_service import build_claims_from_monday_item
 from services.stedi_service import submit_claim, get_277_acknowledgement
+
+
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
+
+def retry_operation(fn, description: str, retries: int = MAX_RETRIES):
+    """Retry a function up to N times with exponential backoff."""
+    last_error = None
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_error = e
+            if attempt < retries:
+                delay = RETRY_DELAY * attempt
+                logger.warning(f"{description} failed (attempt {attempt}/{retries}): {e} — retrying in {delay}s")
+                time.sleep(delay)
+            else:
+                logger.error(f"{description} failed after {retries} attempts: {e}")
+    raise last_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -70,13 +92,16 @@ async def handle_event(body: dict):
         logger.info(f"Ignored — status is '{new_label}'")
         return
 
-    # Step 1: Fetch order
+    # Step 1: Fetch order (with retry)
     logger.info(f"Step 1: Fetching order {item_id} | test={is_test}")
     try:
-        order_data = get_order_item(item_id)
+        order_data = retry_operation(
+            lambda: get_order_item(item_id),
+            f"Fetch order {item_id}",
+        )
         log_order_data(order_data)
     except Exception as e:
-        logger.error(f"Failed to fetch order: {e}", exc_info=True)
+        logger.error(f"Failed to fetch order after retries: {e}", exc_info=True)
         return
 
     # Step 2: Build Stedi claim JSON
@@ -116,72 +141,61 @@ async def handle_event(body: dict):
 
             logger.info(f"Submitted: claim_id={claim_id} | pcn={patient_control_number}")
 
-            # Step 4a: Update Order Board → Submitted
-            # Claims Board item is only created if this succeeds
-            status_updated = False
+            # Step 4a: Update Order Board → Submitted (with retry)
             try:
-                update_claim_status(item_id=item_id, status="Submitted")
+                retry_operation(
+                    lambda: update_claim_status(item_id=item_id, status="Submitted"),
+                    f"Update status for item {item_id}",
+                )
                 logger.info("Order status → Submitted")
-                status_updated = True
             except Exception as e:
-                logger.warning(f"Status update failed: {e}")
+                logger.warning(f"Status update failed after retries: {e}")
 
-            # Step 4b: Store claim_id on Order Board item
-            # Used later by 277/835 webhooks to find this order
+            # Step 4b: Store PCN on Order Board item (with retry)
             try:
-                store_claim_pcn(
-                    item_id=item_id,
-                    pcn=patient_control_number,
-                    claim_id=claim_id,
+                retry_operation(
+                    lambda pcn=patient_control_number, cid=claim_id: store_claim_pcn(
+                        item_id=item_id, pcn=pcn, claim_id=cid,
+                    ),
+                    f"Store PCN for item {item_id}",
                 )
                 logger.info(f"Stored claim_id={claim_id} on order item {item_id}")
             except Exception as e:
-                logger.warning(f"PCN store failed: {e}")
+                logger.warning(f"PCN store failed after retries: {e}")
 
-            # Step 4c: Post submission comment to Monday Updates tab
-            try:
-                # post_claim_update_to_monday(
-                #     item_id=item_id,
-                #     claim_id=claim_id,
-                #     payer=payer,
-                #     pcn=patient_control_number,
-                #     is_test=is_test,
-                #     stedi_payload=payload,
-                # )
-                submitted_claims.append({
-                    "claim_id": claim_id,
-                    "payer": payer,
-                    "pcn": patient_control_number,
-                    "payload": payload,
-                })
-            except Exception as e:
-                logger.warning(f"Monday update post failed: {e}")
+            # Step 4c: Collect for batch update comment
+            submitted_claims.append({
+                "claim_id": claim_id,
+                "payer": payer,
+                "pcn": patient_control_number,
+                "payload": payload,
+            })
 
             # Step 4d: Update inline 277 status if already available
-            # if inline_277_status != "Pending":
-            #     try:
-            #         update_277_status(
-            #             item_id=item_id,
-            #             status=inline_277_status,
-            #             rejection_reason="",
-            #         )
-            #         logger.info(f"277 status → {inline_277_status}")
-            #     except Exception as e:
-            #         logger.warning(f"277 update failed: {e}")
-
-            # Step 5: Create Claims Board item ONLY if status updated to Submitted
-            if status_updated:
+            if inline_277_status != "Pending":
                 try:
-                    claims_item_id = create_claims_board_item(
+                    update_277_status(
+                        item_id=item_id,
+                        status=inline_277_status,
+                        rejection_reason="",
+                    )
+                    logger.info(f"277 status → {inline_277_status}")
+                except Exception as e:
+                    logger.warning(f"277 update failed: {e}")
+
+            # Step 5: Always create Claims Board item (claim was submitted successfully)
+            try:
+                claims_item_id = retry_operation(
+                    lambda: create_claims_board_item(
                         order_item=order_data,
                         claim_id=claim_id,
                         payer_name=payer,
-                    )
-                    logger.info(f"Claims Board item created: {claims_item_id}")
-                except Exception as e:
-                    logger.warning(f"Claims Board creation failed: {e}")
-            else:
-                logger.warning(f"Skipping Claims Board creation — status update failed for item {item_id}")
+                    ),
+                    f"Create Claims Board item for {patient_control_number}",
+                )
+                logger.info(f"Claims Board item created: {claims_item_id}")
+            except Exception as e:
+                logger.warning(f"Claims Board creation failed after retries: {e}")
 
         except Exception as e:
             logger.error(f"Failed on payload #{i}: {e}", exc_info=True)

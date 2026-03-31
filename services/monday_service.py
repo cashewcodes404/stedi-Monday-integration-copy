@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 MONDAY_API_URL = "https://api.monday.com/v2"
 
 
+def is_mock_mode() -> bool:
+    """Check if running without real API keys (mock mode)."""
+    return not os.getenv("MONDAY_API_TOKEN")
+
+
 def get_headers() -> dict:
     token = os.getenv("MONDAY_API_TOKEN")
     if not token:
@@ -39,8 +44,74 @@ def run_query(query: str, variables: dict = None) -> dict:
 
     return result
 
+
+def search_board_items(board_id: str, column_id: str, match_value: str) -> str:
+    """
+    Search all items on a board for a column value match.
+    Uses cursor-based pagination to handle boards with >200 items.
+    Returns the item ID if found, or empty string.
+    """
+    if not board_id or not match_value:
+        return ""
+
+    query = """
+    query FindItem($boardId: ID!, $cursor: String) {
+      boards(ids: [$boardId]) {
+        items_page(limit: 200, cursor: $cursor) {
+          cursor
+          items {
+            id
+            name
+            column_values { id text }
+          }
+        }
+      }
+    }
+    """
+    cursor = None
+
+    while True:
+        variables = {"boardId": board_id}
+        if cursor:
+            variables["cursor"] = cursor
+
+        try:
+            result = run_query(query, variables)
+            page = (
+                result.get("data", {})
+                .get("boards", [{}])[0]
+                .get("items_page", {})
+            )
+            items = page.get("items", [])
+
+            for item in items:
+                for col in item.get("column_values", []):
+                    if col.get("id") == column_id:
+                        stored = col.get("text") or ""
+                        # Support comma-separated values (multi-claim orders)
+                        stored_values = [v.strip() for v in stored.split(",")]
+                        if match_value in stored_values:
+                            return item["id"]
+                        # Also check exact match for non-comma cases
+                        if stored == match_value:
+                            return item["id"]
+
+            cursor = page.get("cursor")
+            if not cursor or not items:
+                break
+
+        except Exception as e:
+            logger.error(f"Board search failed: {e}")
+            break
+
+    return ""
+
 def get_order_item(item_id: str) -> dict:
-    """Fetch order item with all column values"""
+    """Fetch order item with all column values. Returns mock data in mock mode."""
+    if is_mock_mode():
+        logger.info(f"MOCK MODE: Returning sample order for item_id={item_id}")
+        return _get_mock_order_item(item_id)
+
     query = """
     query GetOrderItem($itemId: ID!) {
       items(ids: [$itemId]) {
@@ -70,13 +141,66 @@ def get_order_item(item_id: str) -> dict:
     logger.info(f"Fetched item: {items[0].get('name')}")
     return items[0]
 
+
+def _get_mock_order_item(item_id: str) -> dict:
+    """Return a realistic mock order item for testing without Monday API."""
+    return {
+        "id": item_id,
+        "name": "John TestPatient",
+        "column_values": [
+            {"id": "status",            "text": "Submit Claim", "value": None},
+            {"id": "text_mm18zjmz",     "text": "Male",        "value": None},
+            {"id": "text_mm187t6a",     "text": "01/15/1980",  "value": None},
+            {"id": "phone_mm18rr9v",    "text": "555-123-4567", "value": None},
+            {"id": "location_mm187v29", "text": "123 Test St, Brooklyn, NY 11221", "value": None},
+            {"id": "color_mm189t0b",    "text": "E10.65",      "value": None},
+            {"id": "color_mm18ds28",    "text": "Insulin",     "value": None},
+            {"id": "text_mm18w2y4",     "text": "Jane Doctor", "value": None},
+            {"id": "text_mm18x1kj",     "text": "1234567890",  "value": None},
+            {"id": "location_mm18qfed", "text": "456 Medical Ave, New York, NY 10001", "value": None},
+            {"id": "phone_mm18t5ct",    "text": "555-987-6543", "value": None},
+            {"id": "color_mm18jhq5",    "text": "Anthem BCBS Commercial", "value": None},
+            {"id": "text_mm18s3fe",     "text": "TEST123456",  "value": None},
+            {"id": "color_mm18h6yn",    "text": "Anthem BCBS Commercial", "value": None},
+            {"id": "text_mm18c6z4",     "text": "",            "value": None},
+            {"id": "color_mm18h05q",    "text": "Individual",  "value": None},
+        ],
+        "subitems": [
+            {
+                "id": "mock_sub_1",
+                "name": "CGM Sensors",
+                "column_values": [
+                    {"id": "status",            "text": "Ready",      "value": None},
+                    {"id": "date0",             "text": "2026-03-15", "value": None},
+                    {"id": "color_mm18p9f4",    "text": "Anthem BCBS Commercial", "value": None},
+                    {"id": "text_mm18k1x8",     "text": "",           "value": None},
+                    {"id": "text_mm18zcs4",     "text": "TEST123456", "value": None},
+                    {"id": "numeric_mm18t2q9",  "text": "6",          "value": None},
+                    {"id": "color_mm185yjy",    "text": "Dexcom G7",  "value": None},
+                    {"id": "color_mm18e5yq",    "text": "",           "value": None},
+                    {"id": "color_mm18pj26",    "text": "",           "value": None},
+                    {"id": "text_mm18dsxx",     "text": "",           "value": None},
+                ],
+            },
+        ],
+    }
+
 STATUS_TO_INDEX = {
     "Accepted":       "1",
     "Rejected":       "0",   # Payer Rejected
     "Stedi Rejected": "2",
 }
 
+def _mock_mutation(description: str, **kwargs) -> None:
+    """Log a mutation that would have been sent in live mode."""
+    logger.info(f"MOCK MODE: Would {description} — {kwargs}")
+
+
 def update_277_status(item_id: str, status: str, rejection_reason: str = "") -> None:
+    if is_mock_mode():
+        _mock_mutation("update 277 status", item_id=item_id, status=status)
+        return
+
     board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
 
     mutation = """
@@ -125,6 +249,10 @@ CLAIM_STATUS_TO_INDEX = {
 }
 
 def update_claim_status(item_id: str, status: str) -> None:
+    if is_mock_mode():
+        _mock_mutation("update claim status", item_id=item_id, status=status)
+        return
+
     board_id     = os.getenv("MONDAY_ORDER_BOARD_ID")
     label_index  = CLAIM_STATUS_TO_INDEX.get(status, "1")
     status_value = '{"index": ' + label_index + '}'
@@ -152,42 +280,25 @@ def update_claim_status(item_id: str, status: str) -> None:
         logger.warning(f"Failed to update Claim Status column: {e}")
         raise
 
-# def create_claims_board_item(order_item: dict, claim_id: str) -> str:
-#     """Create new item in Claims Board when claim is accepted"""
-#     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
-#
-#     if not claims_board_id:
-#         logger.warning("MONDAY_CLAIMS_BOARD_ID not set — skipping claims board creation")
-#         return ""
-#
-#     patient_name = order_item.get("name", "Unknown")
-#
-#     mutation = """
-#     mutation CreateItem($boardId: ID!, $itemName: String!) {
-#       create_item(board_id: $boardId, item_name: $itemName) { id }
-#     }
-#     """
-#     result = run_query(mutation, {
-#         "boardId": claims_board_id,
-#         "itemName": patient_name,
-#     })
-#
-#     new_item_id = result.get("data", {}).get("create_item", {}).get("id", "")
-#     logger.info(f"Created Claims Board item {new_item_id} for {patient_name}")
-#     return new_item_id
-
 def create_claims_board_item(order_item: dict, claim_id: str, payer_name: str = "") -> str:
     """
     Create new item in Claims Board after claim is submitted.
     Populates as many fields as possible from the order data.
     """
+    if is_mock_mode():
+        import uuid
+        mock_id = f"mock_{uuid.uuid4().hex[:8]}"
+        patient_name = order_item.get("name", "Unknown")
+        _mock_mutation("create Claims Board item", patient=patient_name, claim_id=claim_id)
+        return mock_id
+
     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
     if not claims_board_id:
         logger.warning("MONDAY_CLAIMS_BOARD_ID not set — skipping")
         return ""
 
     patient_name = order_item.get("name", "Unknown")
-    item_name = f"[TEST] {patient_name} - {payer_name}" if payer_name else f"[TEST] {patient_name}"
+    item_name = f"{patient_name} - {payer_name}" if payer_name else patient_name
 
     # Step 1: Create the item
     mutation = """
@@ -268,8 +379,13 @@ def create_claims_board_item(order_item: dict, claim_id: str, payer_name: str = 
 def populate_era_data_on_claims_item(claims_item_id: str, era_data: dict) -> None:
     """
     Populate ERA payment data onto a Claims Board item.
-    Phase 1: Parent row fields only.
+    Parent row fields + service line subitems.
     """
+    if is_mock_mode():
+        _mock_mutation("populate ERA data", claims_item_id=claims_item_id,
+                       paid=era_data.get("primary_paid"), pr=era_data.get("pr_amount"))
+        return
+
     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
 
     mutation = """
@@ -349,46 +465,6 @@ SUBITEM_ERA_COLUMN_MAP = {
     "Parsed Adj Reasons":    ("long_text_mm1g7xmy",     "long_text"), # Adjustment Reasons
 }
 
-#
-# def store_claim_pcn(item_id: str, pcn: str, claim_id: str) -> None:
-#     """
-#     Store patientControlNumber and claim_id on Order Board item.
-#     Used to match 277/835 responses back to the correct order.
-#     Requires 'Claim ID' text column added by Brandon.
-#     """
-#     board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
-#
-#     mutation = """
-#     mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
-#       change_column_value(
-#         item_id: $itemId,
-#         board_id: $boardId,
-#         column_id: $columnId,
-#         value: $value
-#       ) { id }
-#     }
-#     """
-#
-#     # Store claim_id in the new Claim ID column Brandon added
-#     # Update column ID once confirmed from board
-#     fields = {
-#         "text_mm1ra2v1": pcn,   # Claim ID column — update ID if different
-#     }
-#
-#     for col_id, value in fields.items():
-#         if not value:
-#             continue
-#         try:
-#             run_query(mutation, {
-#                 "itemId":   str(item_id),
-#                 "boardId":  str(board_id),
-#                 "columnId": col_id,
-#                 "value":    f'"{value}"',
-#             })
-#             logger.info(f"Stored claim_id={claim_id} on order item {item_id}")
-#         except Exception as e:
-#             logger.warning(f"Failed to store claim_id: {e}")
-
 def _get_column_value(item_id: str, column_id: str) -> str:
     """Read a single column value from an Order Board item"""
     query = """
@@ -408,15 +484,22 @@ def _get_column_value(item_id: str, column_id: str) -> str:
         pass
     return ""
 
-def store_claim_pcn(item_id: str, pcn: str, claim_id: str) -> None:
-    board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
+import threading
 
-    # Read existing value first, then append
-    existing = _get_column_value(item_id, "text_mm1ra2v1")
-    if existing and pcn not in existing:
-        new_value = f"{existing},{pcn}"
-    else:
-        new_value = pcn
+_pcn_lock = threading.Lock()
+
+
+def store_claim_pcn(item_id: str, pcn: str, claim_id: str) -> None:
+    """
+    Store patientControlNumber on Order Board item.
+    Uses a lock to prevent race conditions when multiple claims
+    for the same order submit concurrently.
+    """
+    if is_mock_mode():
+        _mock_mutation("store PCN", item_id=item_id, pcn=pcn)
+        return
+
+    board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
 
     mutation = """
     mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
@@ -428,22 +511,34 @@ def store_claim_pcn(item_id: str, pcn: str, claim_id: str) -> None:
       ) { id }
     }
     """
-    try:
-        run_query(mutation, {
-            "itemId":   str(item_id),
-            "boardId":  str(board_id),
-            "columnId": "text_mm1ra2v1",
-            "value":    f'"{new_value}"',
-        })
-        logger.info(f"Stored pcn={pcn} on order item {item_id} (full: {new_value})")
-    except Exception as e:
-        logger.warning(f"Failed to store pcn: {e}")
+
+    with _pcn_lock:
+        existing = _get_column_value(item_id, "text_mm1ra2v1")
+        if existing and pcn not in existing:
+            new_value = f"{existing},{pcn}"
+        else:
+            new_value = pcn
+
+        try:
+            run_query(mutation, {
+                "itemId":   str(item_id),
+                "boardId":  str(board_id),
+                "columnId": "text_mm1ra2v1",
+                "value":    f'"{new_value}"',
+            })
+            logger.info(f"Stored pcn={pcn} on order item {item_id} (full: {new_value})")
+        except Exception as e:
+            logger.warning(f"Failed to store pcn: {e}")
 
 def post_claim_update_to_monday(
     item_id: str,
     submitted_claims: list,
     is_test: bool = False,
 ) -> None:
+    if is_mock_mode():
+        _mock_mutation("post claim update", item_id=item_id, claims=len(submitted_claims))
+        return
+
     import json
     from datetime import datetime
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
