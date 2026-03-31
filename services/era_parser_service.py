@@ -148,6 +148,11 @@ def parse_era_json(era_json: dict) -> dict:
     claim_status    = claim_info.get("claimStatusCode", "")
 
     # ── Parent (claim level) — Phase 1 raw fields ─────────────────────────
+    # Envelope fields (paid_date, check_number, raw_remittance_trace)
+    # may be injected at the era_json root by parse_era_from_string
+    financial_info = era_json.get("financialInformation", {})
+    reassoc_info   = era_json.get("reassociationTraceNumber", {})
+
     parent = {
         # Raw Stedi fields to populate now
         "primary_paid":            format_amount(claim_info.get("claimPaymentAmount")),
@@ -155,11 +160,11 @@ def parse_era_json(era_json: dict) -> dict:
         "primary_status":          claim_status,
         "raw_patient_control_num": patient_control,
         "raw_payer_claim_control": claim_info.get("payerClaimControlNumber", ""),
-        "raw_claim_charge":        format_amount(claim_info.get("totalClaimChargeAmount")),
-        # Dates come from ERA envelope — placeholder for now
-        "paid_date":               "",
-        "check_number":            "",
-        "raw_remittance_trace":    "",
+        "raw_claim_charge_amount": format_amount(claim_info.get("totalClaimChargeAmount")),
+        # Envelope fields — populated from transaction-level data
+        "paid_date":               financial_info.get("paymentDate", ""),
+        "check_number":            reassoc_info.get("checkOrEftNumber", ""),
+        "raw_remittance_trace":    reassoc_info.get("checkOrEftNumber", ""),
     }
 
     logger.info(
@@ -300,6 +305,8 @@ def summarize_era_row_for_monday(era_row: dict) -> dict:
         "raw_patient_control_num": parent.get("raw_patient_control_num", ""),
         "raw_payer_claim_control": parent.get("raw_payer_claim_control", ""),
         "check_number":            parent.get("check_number", ""),
+        "raw_claim_charge_amount": parent.get("raw_claim_charge_amount", ""),
+        "raw_remittance_trace":    parent.get("raw_remittance_trace", ""),
         # Children for subitem creation
         "children":                era_row.get("children", []),
     }

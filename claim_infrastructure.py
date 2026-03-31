@@ -799,8 +799,9 @@ def build_service_line_from_normalized_order(normalized_order: dict) -> dict:
     pre_modifiers = normalized_order.get("pre_computed_modifiers")
     pre_charge    = safe_str(normalized_order.get("pre_computed_charge", ""))
 
-    if pre_hcpc and pre_units and pre_charge:
+    if pre_hcpc and pre_units and pre_charge is not None and pre_charge != "":
         # Use pre-computed values — respects human edits on Claims Board
+        # Note: pre_charge can be "0" or "0.00" which is valid (don't treat as falsy)
         procedure_code = pre_hcpc
         service_unit_count = pre_units
         procedure_modifiers = pre_modifiers if isinstance(pre_modifiers, list) else []

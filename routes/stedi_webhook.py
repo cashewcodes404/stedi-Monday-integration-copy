@@ -90,6 +90,10 @@ async def handle_277_event(transaction_id: str, detail: dict) -> None:
         status, rejection_reason, patient_account_number = parse_277_status(report)
         logger.info(f"[277] Status={status} | PCN={patient_account_number}")
 
+        if not patient_account_number:
+            logger.error(f"[277] No patient control number in report — cannot route update")
+            return
+
         if is_claims_board_mode():
             # NEW FLOW: Write 277 status to Claims Board parent
             claims_item_id = _find_claims_item_by_pcn(patient_account_number)
@@ -289,6 +293,23 @@ async def handle_835_event(transaction_id: str, detail: dict) -> None:
                         logger.info(f"[835] Set Primary ERA Date = {today}")
                     except Exception as e2:
                         logger.warning(f"[835] ERA Date update failed: {e2}")
+
+                    # Next Activity Primary → today (dev brief section 4e)
+                    # TODO: Column ID for "Next Activity Primary" not yet identified
+                    #        on live Claims Board. Once identified, add to
+                    #        claims_board_config.py and uncomment the write below.
+                    # try:
+                    #     next_activity_col_id = "date_XXXXXXXX"  # REPLACE with real column ID
+                    #     run_query(mutation, {
+                    #         "itemId": str(claims_item_id),
+                    #         "boardId": str(claims_board_id_env),
+                    #         "columnId": next_activity_col_id,
+                    #         "value": '{"date": "' + today + '"}',
+                    #     })
+                    #     logger.info(f"[835] Set Next Activity Primary = {today}")
+                    # except Exception as e3:
+                    #     logger.warning(f"[835] Next Activity Primary update failed: {e3}")
+                    logger.warning("[835] Next Activity Primary date NOT written — column ID not yet identified on live board")
 
                 except Exception as e:
                     logger.warning(f"[835] Workflow update failed: {e}")

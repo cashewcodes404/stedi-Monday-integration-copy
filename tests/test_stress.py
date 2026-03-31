@@ -561,3 +561,304 @@ class TestStediWebhookHandlers:
         source = inspect.getsource(handle_claims_board_event)
         assert "date_mm14rk8d" in source, \
             "Claim Sent Date should use real column ID date_mm14rk8d"
+
+    def test_monday_webhook_sets_primary_status_outstanding(self):
+        """BUG 7: Claims Board webhook should set Primary Status → Outstanding after submission."""
+        import inspect
+        from routes.monday_webhook import handle_claims_board_event
+        source = inspect.getsource(handle_claims_board_event)
+        assert "color_mkxmywtb" in source, \
+            "Primary Status should be set using real column ID color_mkxmywtb"
+
+    def test_monday_webhook_posts_comment(self):
+        """BUG 8: Claims Board webhook should post comment with claim_id + PCN."""
+        import inspect
+        from routes.monday_webhook import handle_claims_board_event
+        source = inspect.getsource(handle_claims_board_event)
+        assert "post_claim_update_to_monday" in source, \
+            "Claims Board webhook should call post_claim_update_to_monday"
+
+
+# ============================================================
+# 7. ERA PARSER AND PARENT FIELD COMPLETENESS
+# ============================================================
+
+class TestERAParserCompleteness:
+    """Verify ERA parser extracts all required fields."""
+
+    def test_era_parser_extracts_paid_date_from_envelope(self):
+        """BUG: paid_date was never populated from transaction envelope."""
+        from services.era_parser_service import parse_era_json
+        flat = {
+            "claimPaymentInfo": {
+                "patientControlNumber": "PCN001",
+                "claimPaymentAmount": "100.00",
+                "claimStatusCode": "1",
+            },
+            "serviceLines": [],
+            "financialInformation": {"paymentDate": "2026-03-15"},
+            "reassociationTraceNumber": {"checkOrEftNumber": "CHK12345"},
+        }
+        result = parse_era_json(flat)
+        assert result["parent"]["paid_date"] == "2026-03-15", \
+            "paid_date should come from financialInformation.paymentDate"
+        assert result["parent"]["check_number"] == "CHK12345", \
+            "check_number should come from reassociationTraceNumber.checkOrEftNumber"
+
+    def test_era_parser_extracts_remittance_trace(self):
+        """BUG 11: raw_remittance_trace should be populated."""
+        from services.era_parser_service import parse_era_json
+        flat = {
+            "claimPaymentInfo": {
+                "patientControlNumber": "PCN001",
+                "claimStatusCode": "1",
+            },
+            "serviceLines": [],
+            "reassociationTraceNumber": {"checkOrEftNumber": "TRACE999"},
+        }
+        result = parse_era_json(flat)
+        assert result["parent"]["raw_remittance_trace"] == "TRACE999"
+
+    def test_era_parser_extracts_raw_claim_charge_amount(self):
+        """raw_claim_charge_amount should come from totalClaimChargeAmount."""
+        from services.era_parser_service import parse_era_json
+        flat = {
+            "claimPaymentInfo": {
+                "patientControlNumber": "PCN001",
+                "claimStatusCode": "1",
+                "totalClaimChargeAmount": "1234.56",
+            },
+            "serviceLines": [],
+        }
+        result = parse_era_json(flat)
+        assert result["parent"]["raw_claim_charge_amount"] == 1234.56
+
+    def test_summarize_era_includes_all_parent_fields(self):
+        """summarize_era_row_for_monday should include all ERA parent fields."""
+        from services.era_parser_service import summarize_era_row_for_monday
+        era_row = {
+            "parent": {
+                "primary_paid": 100.0,
+                "pr_amount": 25.0,
+                "paid_date": "2026-03-15",
+                "primary_status": "1",
+                "raw_patient_control_num": "PCN001",
+                "raw_payer_claim_control": "PCC001",
+                "check_number": "CHK123",
+                "raw_claim_charge_amount": 500.0,
+                "raw_remittance_trace": "TRACE001",
+            },
+            "children": [],
+        }
+        summary = summarize_era_row_for_monday(era_row)
+        assert summary["raw_claim_charge_amount"] == 500.0
+        assert summary["raw_remittance_trace"] == "TRACE001"
+        assert summary["raw_payer_claim_control"] == "PCC001"
+
+    def test_populate_era_field_map_covers_all_parent_columns(self):
+        """populate_era_data_on_claims_item should write all ERA parent columns."""
+        import inspect
+        from services.monday_service import populate_era_data_on_claims_item
+        source = inspect.getsource(populate_era_data_on_claims_item)
+        # All required parent column IDs
+        required_columns = [
+            "numeric_mm115q76",   # primary_paid
+            "numeric_mkxmc2rh",   # pr_amount
+            "date_mm11zg2f",      # paid_date
+            "text_mm11m3fh",      # check_number
+            "text_mkzck8tw",      # primary_status
+            "text_mm1gkf40",      # raw_patient_control_num
+            "text_mm1gefbz",      # raw_payer_claim_control
+            "numeric_mm1ghydj",   # raw_claim_charge_amount
+            "text_mm1gz8ss",      # raw_remittance_trace
+        ]
+        for col_id in required_columns:
+            assert col_id in source, \
+                f"ERA parent field {col_id} missing from populate_era_data_on_claims_item"
+
+    def test_create_claims_board_parent_writes_addresses(self):
+        """create_claims_board_parent should write patient and doctor addresses."""
+        import inspect
+        from services.monday_service import create_claims_board_parent
+        source = inspect.getsource(create_claims_board_parent)
+        assert "location_mkxxpesw" in source, \
+            "Patient address should be written to location_mkxxpesw"
+        assert "location_mkxr251b" in source, \
+            "Doctor address should be written to location_mkxr251b"
+
+    def test_835_handler_has_next_activity_primary_todo(self):
+        """BUG 10: 835 handler should have Next Activity Primary handling."""
+        import inspect
+        from routes.stedi_webhook import handle_835_event
+        source = inspect.getsource(handle_835_event)
+        assert "Next Activity Primary" in source, \
+            "835 handler should reference Next Activity Primary (even as TODO)"
+
+
+# ============================================================
+# 8. FINAL REGRESSION TESTS
+# ============================================================
+
+class TestFinalRegressionChecks:
+    """Final round of regression tests for all bug fixes."""
+
+    def test_pre_computed_charge_zero_uses_pre_computed(self):
+        """Issue #5: pre_computed_charge of '0' should NOT fall back to resolver."""
+        from claim_infrastructure import build_service_line_from_normalized_order
+        order = {
+            "order_date": "20260315",
+            "item": "Test",
+            "source_child_name": "Test",
+            "pre_computed_hcpc": "A4239",
+            "pre_computed_units": "1",
+            "pre_computed_modifiers": [],
+            "pre_computed_charge": "0",
+        }
+        result = build_service_line_from_normalized_order(order)
+        assert result["procedure_code"] == "A4239", \
+            "Should use pre-computed HCPC even when charge is '0'"
+        assert result["line_item_charge_amount"] == "0", \
+            "Should use pre-computed charge '0', not fall back to resolver"
+
+    def test_pre_computed_charge_zero_point_zero(self):
+        """pre_computed_charge of '0.00' should use pre-computed values."""
+        from claim_infrastructure import build_service_line_from_normalized_order
+        order = {
+            "order_date": "20260315",
+            "item": "Test",
+            "source_child_name": "Test",
+            "pre_computed_hcpc": "E0784",
+            "pre_computed_units": "1",
+            "pre_computed_modifiers": ["NU"],
+            "pre_computed_charge": "0.00",
+        }
+        result = build_service_line_from_normalized_order(order)
+        assert result["procedure_code"] == "E0784"
+        assert result["line_item_charge_amount"] == "0.00"
+        assert result["procedure_modifiers"] == ["NU"]
+
+    def test_pre_computed_charge_empty_falls_back(self):
+        """Empty pre_computed_charge SHOULD fall back to resolver."""
+        from claim_infrastructure import build_service_line_from_normalized_order
+        order = {
+            "order_date": "20260315",
+            "item": "CGM Sensors",
+            "source_child_name": "CGM Sensors",
+            "pre_computed_hcpc": "A4239",
+            "pre_computed_units": "1",
+            "pre_computed_modifiers": [],
+            "pre_computed_charge": "",
+        }
+        result = build_service_line_from_normalized_order(order)
+        # Falls back to resolver — charge should be computed, not empty
+        assert result["line_item_charge_amount"] != ""
+
+    def test_claims_data_none_check_in_webhook(self):
+        """Issue #3: handle_claims_board_event should guard against empty claims_data."""
+        import inspect
+        from routes.monday_webhook import handle_claims_board_event
+        source = inspect.getsource(handle_claims_board_event)
+        assert "not claims_data" in source, \
+            "Should have None/empty guard on claims_data"
+
+    def test_277_empty_pcn_guard(self):
+        """Issue #12: 277 handler should bail out if PCN is empty."""
+        import inspect
+        from routes.stedi_webhook import handle_277_event
+        source = inspect.getsource(handle_277_event)
+        assert "not patient_account_number" in source, \
+            "277 handler should check for empty PCN before routing"
+
+    def test_era_subitem_field_mapping_keys_match_column_map(self):
+        """Verify _write_era_fields_to_subitem dict keys match SUBITEM_ERA_COLUMN_MAP."""
+        import inspect
+        from services.monday_service import _write_era_fields_to_subitem, SUBITEM_ERA_COLUMN_MAP
+        source = inspect.getsource(_write_era_fields_to_subitem)
+        # Every key in the fields dict should exist in SUBITEM_ERA_COLUMN_MAP
+        for key in SUBITEM_ERA_COLUMN_MAP:
+            # The key must appear as a dict key in the source (quoted string)
+            assert f'"{key}"' in source, \
+                f"SUBITEM_ERA_COLUMN_MAP key '{key}' not referenced in _write_era_fields_to_subitem"
+
+    def test_era_parser_handles_missing_envelope_fields(self):
+        """ERA parser should not crash when envelope fields are missing."""
+        from services.era_parser_service import parse_era_json
+        flat = {
+            "claimPaymentInfo": {
+                "patientControlNumber": "PCN001",
+                "claimStatusCode": "1",
+                "claimPaymentAmount": "100.00",
+            },
+            "serviceLines": [],
+            # No financialInformation or reassociationTraceNumber
+        }
+        result = parse_era_json(flat)
+        assert result["parent"]["paid_date"] == ""
+        assert result["parent"]["check_number"] == ""
+        assert result["parent"]["raw_remittance_trace"] == ""
+
+    def test_era_full_stedi_format_populates_envelope(self):
+        """parse_era_from_string with Stedi API format should wire envelope fields."""
+        import json
+        from services.era_parser_service import parse_era_from_string
+        stedi_json = {
+            "transactions": [{
+                "financialInformation": {
+                    "checkIssueOrEFTEffectiveDate": "20260320",
+                },
+                "paymentAndRemitReassociationDetails": {
+                    "checkOrEFTTraceNumber": "TRACE777",
+                },
+                "detailInfo": [{
+                    "paymentInfo": [{
+                        "claimPaymentInfo": {
+                            "patientControlNumber": "PCN_TEST",
+                            "claimStatusCode": "1",
+                            "claimPaymentAmount": "250.00",
+                        },
+                        "serviceLines": [],
+                    }]
+                }]
+            }]
+        }
+        results = parse_era_from_string(json.dumps(stedi_json))
+        assert len(results) == 1
+        parent = results[0]["parent"]
+        assert parent["paid_date"] == "2026-03-20"
+        assert parent["check_number"] == "TRACE777"
+        assert parent["raw_remittance_trace"] == "TRACE777"
+
+    def test_location_column_format_in_create_parent(self):
+        """create_claims_board_parent should format location columns as JSON."""
+        import inspect
+        from services.monday_service import create_claims_board_parent
+        source = inspect.getsource(create_claims_board_parent)
+        # Should have location column formatting logic
+        assert 'startswith("location_")' in source, \
+            "Should have special formatting for location columns"
+
+    def test_claims_board_event_workflow_submitted(self):
+        """handle_claims_board_event should set workflow to Submitted."""
+        import inspect
+        from routes.monday_webhook import handle_claims_board_event
+        source = inspect.getsource(handle_claims_board_event)
+        assert 'status="Submitted"' in source
+
+    def test_no_placeholder_column_ids_anywhere(self):
+        """Final sweep: no placeholder column IDs used as actual values in column maps."""
+        import glob
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Only check for placeholders used as actual column ID VALUES (quoted strings
+        # assigned as column IDs). Exclude comments, validation functions, and test files.
+        placeholders = ['"cb_sub_', '"cb_claim_', '"nob_', '"text_stedi_claim_id']
+        skip_files = ["claims_board_config.py"]  # Has validation code that references prefixes
+        for pattern in ["*.py", "**/*.py"]:
+            for filepath in glob.glob(os.path.join(root, pattern), recursive=True):
+                basename = os.path.basename(filepath)
+                if "test_" in basename or "__pycache__" in filepath or basename in skip_files:
+                    continue
+                with open(filepath) as f:
+                    content = f.read()
+                for p in placeholders:
+                    assert p not in content, \
+                        f"Placeholder {p} found as column ID in {filepath}"

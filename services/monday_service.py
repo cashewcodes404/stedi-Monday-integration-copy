@@ -407,6 +407,9 @@ def populate_era_data_on_claims_item(claims_item_id: str, era_data: dict) -> Non
         "check_number":            ("text_mm11m3fh",    "text"),    # Check #
         "primary_status":          ("text_mkzck8tw",    "text"),    # Primary -->
         "raw_patient_control_num": ("text_mm1gkf40",    "text"),    # Raw Patient Control Number
+        "raw_payer_claim_control": ("text_mm1gefbz",    "text"),    # Raw Payer Claim Control Number
+        "raw_claim_charge_amount": ("numeric_mm1ghydj", "number"),  # Raw Claim Charge Amount
+        "raw_remittance_trace":    ("text_mm1gz8ss",    "text"),    # Raw Remittance Trace
     }
 
     for field, (column_id, col_type) in field_to_column.items():
@@ -697,6 +700,8 @@ def get_new_order_item(item_id: str) -> dict:
         logger.info(f"MOCK MODE: Returning sample new order for item_id={item_id}")
         return _get_mock_new_order_item(item_id)
 
+    # NOTE: NOB was duplicated from Order Board — it HAS subitems.
+    # Must fetch subitems to extract product quantities.
     query = """
     query GetNewOrderItem($itemId: ID!) {
       items(ids: [$itemId]) {
@@ -706,6 +711,15 @@ def get_new_order_item(item_id: str) -> dict:
           id
           text
           value
+        }
+        subitems {
+          id
+          name
+          column_values {
+            id
+            text
+            value
+          }
         }
       }
     }
@@ -931,11 +945,50 @@ def create_claims_board_parent(
     from datetime import date
 
     fields_to_set = {
+        # Patient / Insurance
         "text_mktat89m": normalized_order.get("member_id", ""),
         "text_mkp3y5ax": normalized_order.get("patient_dob", ""),
+        # Doctor
         "text_mkxr2r9b": normalized_order.get("doctor_npi", ""),
         "text_mkxrh4a4": normalized_order.get("doctor_name", ""),
+        # PR Payor ID (if available)
+        "text_mm1gcz3y":  normalized_order.get("pr_payor_id", ""),
     }
+
+    # Location columns use JSON format: {"lat":"","lng":"","address":"..."}
+    patient_addr = normalized_order.get("patient_address_1", "")
+    if patient_addr:
+        addr_parts = [patient_addr]
+        if normalized_order.get("patient_address_2"):
+            addr_parts.append(normalized_order["patient_address_2"])
+        addr_parts.extend([
+            normalized_order.get("patient_city", ""),
+            normalized_order.get("patient_state", ""),
+            normalized_order.get("patient_postal_code", ""),
+        ])
+        full_addr = ", ".join(p for p in addr_parts if p)
+        fields_to_set["location_mkxxpesw"] = full_addr  # Patient Address (location type)
+
+    doctor_addr = normalized_order.get("doctor_address_1", "")
+    if doctor_addr:
+        d_parts = [doctor_addr]
+        if normalized_order.get("doctor_address_2"):
+            d_parts.append(normalized_order["doctor_address_2"])
+        d_parts.extend([
+            normalized_order.get("doctor_city", ""),
+            normalized_order.get("doctor_state", ""),
+            normalized_order.get("doctor_postal_code", ""),
+        ])
+        full_d_addr = ", ".join(p for p in d_parts if p)
+        fields_to_set["location_mkxr251b"] = full_d_addr  # Doctor Address (location type)
+
+    # NOTE: Status-type columns (primary_payor, diagnosis_code, subscription_type,
+    # insurance_type) require label indexes which must be mapped from the live board.
+    # TODO: Add status column writes once label indexes are confirmed:
+    #   color_mkxmhypt → primary_payor (18 payer labels)
+    #   color_mky2gpz5 → diagnosis_code (ICD-10 codes)
+    #   color_mky1qvcf → subscription_type (CGM/Pump/Both)
+    #   color_mkxmmm77 → insurance_type (Commercial/Medicaid/Medicare)
 
     # DOS from order date
     order_date = normalized_order.get("order_date", "")
@@ -962,6 +1015,9 @@ def create_claims_board_parent(
         try:
             if col_id.startswith("date_"):
                 formatted = '{"date": "' + str(value) + '"}'
+            elif col_id.startswith("location_"):
+                import json
+                formatted = json.dumps({"lat": "", "lng": "", "address": str(value)})
             else:
                 formatted = f'"{value}"'
 
@@ -980,8 +1036,12 @@ def create_claims_board_parent(
 
 def populate_claims_board_subitems(claims_item_id: str, product_subitems: list) -> None:
     """
-    Populate the 5 pre-created product subitems on a Claims Board item.
-    Creates subitems named after each product and fills in pre-computed values.
+    Populate product subitems on a Claims Board item with computed claim values.
+
+    Smart behavior:
+    - If subitems already exist (created by Monday automation), UPDATE them
+    - If no subitems exist, CREATE new ones
+    - Matches existing subitems by product name (case-insensitive)
     """
     if is_mock_mode():
         _mock_mutation("populate Claims Board subitems",
@@ -989,7 +1049,38 @@ def populate_claims_board_subitems(claims_item_id: str, product_subitems: list) 
                        products=len(product_subitems))
         return
 
-    from claims_board_config import CLAIMS_BOARD_SUBITEM_WRITE_MAP
+    from claims_board_config import HCPC_STATUS_INDEX
+
+    # Step 1: Check for existing subitems
+    existing_subitems = []
+    try:
+        fetch_query = """
+        query GetSubitems($itemId: ID!) {
+          items(ids: [$itemId]) {
+            subitems {
+              id
+              name
+              board { id }
+              column_values { id text }
+            }
+          }
+        }
+        """
+        result = run_query(fetch_query, {"itemId": claims_item_id})
+        existing_subitems = (
+            result.get("data", {})
+            .get("items", [{}])[0]
+            .get("subitems", [])
+        )
+        if existing_subitems:
+            logger.info(f"Found {len(existing_subitems)} existing subitems — will update")
+    except Exception as e:
+        logger.warning(f"Could not fetch existing subitems: {e} — will create new ones")
+
+    # Build name → subitem lookup for matching
+    name_to_existing = {}
+    for sub in existing_subitems:
+        name_to_existing[sub.get("name", "").strip().lower()] = sub
 
     create_mutation = """
     mutation CreateSubitem($parentId: ID!, $itemName: String!) {
@@ -1011,76 +1102,100 @@ def populate_claims_board_subitems(claims_item_id: str, product_subitems: list) 
     }
     """
 
-    from claims_board_config import HCPC_STATUS_INDEX
-
     for product in product_subitems:
         product_name = product.get("product_name", "Unknown")
 
-        try:
-            # Create subitem
-            result = run_query(create_mutation, {
-                "parentId": str(claims_item_id),
-                "itemName": product_name,
-            })
+        # Try to find existing subitem by name
+        existing = name_to_existing.get(product_name.strip().lower())
 
-            subitem_id = (
-                result.get("data", {})
-                .get("create_subitem", {})
-                .get("id", "")
-            )
-            subitem_board_id = (
-                result.get("data", {})
-                .get("create_subitem", {})
-                .get("board", {})
-                .get("id", "")
-            )
-
-            if not subitem_id or not subitem_board_id:
-                logger.warning(f"Failed to create subitem for {product_name}")
+        if existing:
+            # UPDATE existing subitem
+            subitem_id = existing.get("id")
+            subitem_board_id = existing.get("board", {}).get("id", "")
+            logger.info(f"Updating existing subitem {subitem_id}: {product_name}")
+        else:
+            # CREATE new subitem
+            try:
+                result = run_query(create_mutation, {
+                    "parentId": str(claims_item_id),
+                    "itemName": product_name,
+                })
+                subitem_id = (
+                    result.get("data", {})
+                    .get("create_subitem", {})
+                    .get("id", "")
+                )
+                subitem_board_id = (
+                    result.get("data", {})
+                    .get("create_subitem", {})
+                    .get("board", {})
+                    .get("id", "")
+                )
+                if not subitem_id or not subitem_board_id:
+                    logger.warning(f"Failed to create subitem for {product_name}")
+                    continue
+                logger.info(f"Created Claims Board subitem {subitem_id}: {product_name}")
+            except Exception as e:
+                logger.warning(f"Failed to create subitem for {product_name}: {e}")
                 continue
 
-            logger.info(f"Created Claims Board subitem {subitem_id}: {product_name}")
+        if not subitem_id or not subitem_board_id:
+            continue
 
-            # ── HCPC Code: STATUS column — must set by label index ──
-            hcpc_code = product.get("hcpc_code", "")
-            if hcpc_code:
-                hcpc_index = HCPC_STATUS_INDEX.get(hcpc_code)
-                if hcpc_index is not None:
-                    try:
-                        run_query(update_mutation, {
-                            "itemId":   str(subitem_id),
-                            "boardId":  str(subitem_board_id),
-                            "columnId": "color_mm1cdvq8",  # HCPC Code (STATUS type)
-                            "value":    '{"index": ' + hcpc_index + '}',
-                        })
-                        logger.info(f"  Subitem {product_name}: set hcpc_code = {hcpc_code} (index {hcpc_index})")
-                    except Exception as e:
-                        logger.warning(f"  Subitem {product_name}: failed hcpc_code: {e}")
-                else:
-                    logger.warning(f"  Subitem {product_name}: unknown HCPC code '{hcpc_code}' — not in HCPC_STATUS_INDEX")
+        # ── Write computed values to the subitem ──
+        _write_computed_fields_to_subitem(
+            subitem_id, subitem_board_id, product, update_mutation
+        )
 
-            # ── Order Quantity: writable numeric column ──
-            order_qty = product.get("claim_qty", "") or product.get("units", "")
-            if order_qty:
-                try:
-                    run_query(update_mutation, {
-                        "itemId":   str(subitem_id),
-                        "boardId":  str(subitem_board_id),
-                        "columnId": "numeric_mm1czbyg",  # Order Quantity (writable)
-                        "value":    str(order_qty),
-                    })
-                    logger.info(f"  Subitem {product_name}: set order_qty = {order_qty}")
-                except Exception as e:
-                    logger.warning(f"  Subitem {product_name}: failed order_qty: {e}")
 
-            # NOTE: claim_qty (formula_mm1cv57q) and est_pay (formula_mm1c7nen)
-            # are FORMULA columns — read-only, cannot be written via API.
-            # They compute automatically from order_qty and other board formulas.
+def _write_computed_fields_to_subitem(
+    subitem_id: str,
+    subitem_board_id: str,
+    product: dict,
+    update_mutation: str,
+) -> None:
+    """Write HCPC code, order quantity, and other computed fields to a subitem."""
+    from claims_board_config import HCPC_STATUS_INDEX
 
-            # NOTE: No modifiers column exists on Claims Board subitems.
+    product_name = product.get("product_name", "Unknown")
 
+    # ── HCPC Code: STATUS column — must set by label index ──
+    hcpc_code = product.get("hcpc_code", "")
+    if hcpc_code:
+        hcpc_index = HCPC_STATUS_INDEX.get(hcpc_code)
+        if hcpc_index is not None:
+            try:
+                run_query(update_mutation, {
+                    "itemId":   str(subitem_id),
+                    "boardId":  str(subitem_board_id),
+                    "columnId": "color_mm1cdvq8",  # HCPC Code (STATUS type)
+                    "value":    '{"index": ' + hcpc_index + '}',
+                })
+                logger.info(f"  Subitem {product_name}: set hcpc_code = {hcpc_code} (index {hcpc_index})")
+            except Exception as e:
+                logger.warning(f"  Subitem {product_name}: failed hcpc_code: {e}")
+        else:
+            logger.warning(f"  Subitem {product_name}: unknown HCPC code '{hcpc_code}' — not in HCPC_STATUS_INDEX")
+
+    # ── Order Quantity: writable numeric column ──
+    order_qty = product.get("claim_qty", "") or product.get("units", "")
+    if order_qty:
+        try:
+            run_query(update_mutation, {
+                "itemId":   str(subitem_id),
+                "boardId":  str(subitem_board_id),
+                "columnId": "numeric_mm1czbyg",  # Order Quantity (writable)
+                "value":    str(order_qty),
+            })
+            logger.info(f"  Subitem {product_name}: set order_qty = {order_qty}")
         except Exception as e:
-            logger.warning(f"Failed to create subitem for {product_name}: {e}")
+            logger.warning(f"  Subitem {product_name}: failed order_qty: {e}")
+
+    # NOTE: claim_qty (formula_mm1cv57q) and est_pay (formula_mm1c7nen)
+    # are FORMULA columns — read-only, cannot be written via API.
+    # They compute automatically from order_qty and other board formulas.
+
+    # NOTE: No modifiers column exists on Claims Board subitems.
 
 
 # ============================================================
@@ -1196,7 +1311,7 @@ def update_claims_board_workflow(claims_item_id: str, status: str) -> None:
     }
     """
 
-    col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("claim_status", "cb_claim_status")
+    col_id = CLAIMS_BOARD_PARENT_WRITE_MAP.get("claim_status", "status")
     label_index = CLAIMS_BOARD_STATUS_TO_INDEX.get(status, "1")
     status_value = '{"index": ' + label_index + '}'
 

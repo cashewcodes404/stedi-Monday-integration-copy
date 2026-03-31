@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 import time
 from fastapi import APIRouter, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
@@ -78,6 +79,178 @@ async def monday_webhook(request: Request, background_tasks: BackgroundTasks):
     background_tasks.add_task(handle_event, body)
     return JSONResponse({"status": "received"}, status_code=200)
 
+@router.post("/webhook/populate")
+async def monday_populate_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Webhook for Claims Board item creation / "populate" trigger.
+
+    When a Monday automation fires on item creation (or a status change
+    to a populate-type label), this endpoint:
+      1. Reads the Claims Board item (patient data copied by Monday automation)
+      2. Fetches the linked New Order Board item to get product quantities
+      3. Computes HCPC codes, units, modifiers, estimated charges
+      4. Writes those computed values BACK into the Claims Board subitems
+
+    The human then reviews, possibly edits, and clicks "Submit Claim"
+    which hits the main /webhook endpoint above.
+
+    Monday automation config:
+      Trigger: "When an item is created"
+      Action:  "Send webhook" → POST to {RAILWAY_URL}/monday/webhook/populate
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    if "challenge" in body:
+        logger.info("Monday populate challenge received")
+        return JSONResponse({"challenge": body["challenge"]})
+
+    background_tasks.add_task(handle_populate_event, body)
+    return JSONResponse({"status": "received"}, status_code=200)
+
+
+async def handle_populate_event(body: dict):
+    """
+    Handle a Claims Board item creation event.
+    Computes claim field values and writes them back to the Claims Board
+    so humans can review before submitting.
+    """
+    event = body.get("event", {})
+    item_id = str(event.get("pulseId") or event.get("itemId") or "")
+    board_id = str(event.get("boardId") or "")
+
+    if not item_id:
+        logger.warning("[Populate] No item ID in event — ignoring")
+        return
+
+    logger.info(f"[Populate] Triggered for Claims Board item {item_id}")
+
+    try:
+        # Step 1: Fetch the Claims Board item (patient info, insurance, etc.)
+        claims_item = retry_operation(
+            lambda: get_claims_board_item(item_id),
+            f"Fetch Claims Board item {item_id}",
+        )
+
+        if not claims_item or not claims_item.get("column_values"):
+            logger.warning(f"[Populate] Claims Board item {item_id} has no data yet — skipping")
+            return
+
+        # Step 2: Extract patient/order data from the Claims Board parent
+        from routes.order_to_claims import (
+            extract_new_order_columns,
+            compute_all_product_subitems,
+        )
+        from claims_board_config import (
+            CLAIMS_BOARD_PARENT_COLUMN_MAP,
+            NEW_ORDER_BOARD_COLUMN_MAP,
+        )
+        from claim_infrastructure import (
+            normalize_date,
+            normalize_gender,
+            split_full_name,
+            parse_address,
+            build_normalized_order_template,
+        )
+        from claim_assumptions import resolve_payer_name
+
+        # Build a normalized order from Claims Board parent columns
+        cols = {}
+        for cv in claims_item.get("column_values", []):
+            col_id = cv.get("id", "")
+            field_name = CLAIMS_BOARD_PARENT_COLUMN_MAP.get(col_id, col_id)
+            cols[field_name] = cv.get("text", "") or ""
+
+        patient_full_name = claims_item.get("name", "")
+        # Claims Board item names are typically "Patient Name - Payer"
+        # Strip payer suffix if present
+        if " - " in patient_full_name:
+            patient_full_name = patient_full_name.split(" - ")[0].strip()
+
+        patient_first, patient_last = split_full_name(patient_full_name)
+        patient_addr = parse_address(cols.get("patient_address", ""))
+
+        doctor_full_name = cols.get("doctor_name", "")
+        doctor_first, doctor_last = split_full_name(doctor_full_name)
+        doctor_addr = parse_address(cols.get("doctor_address", ""))
+
+        normalized = build_normalized_order_template()
+
+        # Patient
+        normalized["patient_full_name"]   = patient_full_name
+        normalized["patient_first_name"]  = patient_first
+        normalized["patient_last_name"]   = patient_last
+        normalized["patient_dob"]         = normalize_date(cols.get("dob", ""))
+        normalized["patient_gender"]      = normalize_gender(cols.get("gender", ""))
+        normalized["patient_address_1"]   = patient_addr.get("address1", "")
+        normalized["patient_city"]        = patient_addr.get("city", "")
+        normalized["patient_state"]       = patient_addr.get("state", "")
+        normalized["patient_postal_code"] = patient_addr.get("postal_code", "")
+
+        # Insurance
+        normalized["primary_insurance_name"] = cols.get("primary_insurance", "")
+        normalized["member_id"]              = cols.get("member_id", "")
+        normalized["subscription_type"]      = cols.get("subscription_type", "")
+        normalized["diagnosis_code"]         = cols.get("diagnosis_code", "")
+        normalized["cgm_coverage"]           = cols.get("cgm_coverage", "")
+
+        # Doctor
+        normalized["doctor_name"]         = doctor_full_name
+        normalized["doctor_first_name"]   = doctor_first
+        normalized["doctor_last_name"]    = doctor_last
+        normalized["doctor_npi"]          = cols.get("doctor_npi", "")
+        normalized["doctor_address_1"]    = doctor_addr.get("address1", "")
+        normalized["doctor_city"]         = doctor_addr.get("city", "")
+        normalized["doctor_state"]        = doctor_addr.get("state", "")
+        normalized["doctor_postal_code"]  = doctor_addr.get("postal_code", "")
+
+        # Order metadata
+        dos = cols.get("dos", "")
+        normalized["order_date"]   = normalize_date(dos)
+        normalized["service_date"] = normalize_date(dos)
+
+        # Step 3: Get product quantities from subitems
+        # The Claims Board subitems should already exist (created by Monday automation
+        # or during item creation). We need to read them to get quantities,
+        # then compute and write back the claim fields.
+        existing_subitems = claims_item.get("subitems", [])
+        order_cols = dict(cols)  # copy for compute functions
+
+        if existing_subitems:
+            # Extract quantities from existing subitems
+            from routes.order_to_claims import _extract_product_quantities_from_subitems
+            subitem_quantities = _extract_product_quantities_from_subitems(existing_subitems)
+            order_cols.update(subitem_quantities)
+
+        # Step 4: Compute HCPC codes, units, modifiers, charges for each product
+        product_subitems = compute_all_product_subitems(normalized, order_cols)
+
+        if not product_subitems:
+            logger.warning(f"[Populate] No products with qty > 0 for item {item_id}")
+            return
+
+        # Step 5: Write computed values back to Claims Board subitems
+        from services.monday_service import populate_claims_board_subitems
+        populate_claims_board_subitems(item_id, product_subitems)
+
+        logger.info(
+            f"[Populate] Done: wrote {len(product_subitems)} product subitems "
+            f"back to Claims Board item {item_id}"
+        )
+
+        # Step 6: Update workflow status to indicate fields are populated
+        try:
+            update_claims_board_workflow(claims_item_id=item_id, status="Pending")
+            logger.info(f"[Populate] Set workflow → Pending (ready for review)")
+        except Exception as e:
+            logger.warning(f"[Populate] Workflow update failed: {e}")
+
+    except Exception as e:
+        logger.error(f"[Populate] Failed for item {item_id}: {e}", exc_info=True)
+
+
 @router.get("/test-payer/{name}")
 async def test_payer_lookup(name: str):
     """Test payer name lookup from Stedi directory"""
@@ -127,6 +300,10 @@ async def handle_claims_board_event(item_id: str, is_test: bool) -> None:
         logger.error(f"[CB] Failed to fetch Claims Board item: {e}", exc_info=True)
         return
 
+    if not claims_data or not claims_data.get("column_values"):
+        logger.error(f"[CB] Claims Board item {item_id} returned empty/invalid data")
+        return
+
     # Step 2: Build Stedi claim JSON using pre-computed values
     logger.info("[CB] Step 2: Building Stedi claim JSON from Claims Board")
     try:
@@ -169,6 +346,25 @@ async def handle_claims_board_event(item_id: str, is_test: bool) -> None:
                 )
             except Exception as e:
                 logger.warning(f"[CB] Workflow update failed: {e}")
+
+            # Step 4a2: Set Primary Status → Outstanding (per dev brief step 20)
+            try:
+                from services.monday_service import run_query
+                claims_board_id = __import__('os').getenv("MONDAY_CLAIMS_BOARD_ID")
+                mutation = """
+                mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+                  change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
+                }
+                """
+                run_query(mutation, {
+                    "itemId": str(item_id),
+                    "boardId": str(claims_board_id),
+                    "columnId": "color_mkxmywtb",
+                    "value": '{"index": 0}',
+                })
+                logger.info(f"[CB] Primary Status → Outstanding")
+            except Exception as e:
+                logger.warning(f"[CB] Primary Status update failed: {e}")
 
             # Step 4b: Store correlation ID / PCN on Claims Board
             try:
@@ -232,6 +428,17 @@ async def handle_claims_board_event(item_id: str, is_test: bool) -> None:
             logger.error(f"[CB] Failed on payload #{i}: {e}", exc_info=True)
 
     if submitted_claims:
+        # Step 5: Post comment with claim_id + PCN (dev brief step 20, bullet 5)
+        try:
+            post_claim_update_to_monday(
+                item_id=item_id,
+                submitted_claims=submitted_claims,
+                is_test=is_test,
+            )
+            logger.info(f"[CB] Posted claim update comment to Claims Board item {item_id}")
+        except Exception as e:
+            logger.warning(f"[CB] Monday update post failed: {e}")
+
         logger.info(f"[CB] Successfully submitted {len(submitted_claims)} claim(s)")
 
 
