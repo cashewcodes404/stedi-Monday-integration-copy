@@ -377,9 +377,15 @@ async def handle_process_order_event(body: dict):
         if cols.get("member_id"):
             parent_values["text_mktat89m"] = cols["member_id"]
 
-        # Secondary ID
-        if cols.get("secondary_id"):
-            parent_values["text_mm18c6z4"] = cols["secondary_id"]
+        # Secondary ID (Claims Board column is text_mkxwcqfy)
+        secondary_id = cols.get("secondary_id", "")
+        if secondary_id:
+            parent_values["text_mkxwcqfy"] = secondary_id
+
+        # Medicaid ID — if secondary insurance is Medicaid-related, write to Medicaid ID column
+        secondary_ins = cols.get("secondary_insurance", "")
+        if secondary_id and "medicaid" in secondary_ins.lower():
+            parent_values["text_mkwrwrpc"] = secondary_id
 
         # Doctor
         if cols.get("doctor_name"):
@@ -418,6 +424,12 @@ async def handle_process_order_event(body: dict):
             claims_freq = frequency_text.rstrip("s")  # "90-Days" → "90-Day"
             status_columns["color_mky4mb3y"] = {"label": claims_freq}
 
+            # Frequency (number) — extract numeric value (e.g. "90-Days" → 90)
+            import re
+            freq_match = re.search(r"(\d+)", frequency_text)
+            if freq_match:
+                parent_values["numeric_mm15t7ed"] = int(freq_match.group(1))
+
         # Subscription Type — status column
         sub_type = cols.get("subscription_type", "")
         if sub_type:
@@ -427,6 +439,35 @@ async def handle_process_order_event(body: dict):
         dx = cols.get("diagnosis_code", "")
         if dx:
             status_columns["color_mky2gpz5"] = {"label": dx}
+
+        # Gender — status column (Claims Board: color_mm1zy5f2)
+        gender = cols.get("gender", "")
+        if gender:
+            status_columns["color_mm1zy5f2"] = {"label": gender}
+
+        # CGM Coverage — status column (Claims Board: color_mm1ze7b4)
+        cgm_cov = cols.get("cgm_coverage", "")
+        if cgm_cov:
+            status_columns["color_mm1ze7b4"] = {"label": cgm_cov}
+
+        # Secondary Payer — status column (Claims Board: color_mkxq1a2p)
+        if secondary_ins:
+            status_columns["color_mkxq1a2p"] = {"label": secondary_ins}
+
+        # Next Order / Order Type — status column (Claims Board: color_mkxwg5s6)
+        order_type = cols.get("order_type", "")
+        if order_type:
+            status_columns["color_mkxwg5s6"] = {"label": order_type}
+
+        # Patient Phone (Claims Board: phone_mm1znnww)
+        patient_phone = cols.get("phone", "")
+        if patient_phone:
+            parent_values["phone_mm1znnww"] = {"phone": patient_phone, "countryShortName": "US"}
+
+        # Doctor Phone (Claims Board: phone_mm1zy789)
+        doctor_phone = cols.get("doctor_phone", "")
+        if doctor_phone:
+            parent_values["phone_mm1zy789"] = {"phone": doctor_phone, "countryShortName": "US"}
 
         # Patient Address (location column — needs lat/lng)
         pat_loc = raw_values.get("patient_address", {})
@@ -447,22 +488,30 @@ async def handle_process_order_event(body: dict):
             }
 
         # Product quantities on Claims Board parent
+        # Always write quantities (even "0") to match existing board conventions
         pump_qty = cols.get("pump_qty", "")
-        if pump_qty and pump_qty != "0":
-            parent_values["numeric_mkwz4zkt"] = pump_qty
+        if pump_qty:
+            parent_values["numeric_mkwz4zkt"] = pump_qty        # Pump Qty
         inf1_qty = cols.get("infusion_1_qty", "")
-        if inf1_qty and inf1_qty != "0":
-            parent_values["numeric_mkwz337y"] = inf1_qty
+        if inf1_qty:
+            parent_values["numeric_mkwz337y"] = inf1_qty        # Infusion 1
         inf2_qty = cols.get("infusion_2_qty", "")
-        if inf2_qty and inf2_qty != "0":
-            parent_values["numeric_mkwz9g9f"] = inf2_qty
+        if inf2_qty:
+            parent_values["numeric_mkwz9g9f"] = inf2_qty        # Infusion 2
+        cartridge_qty = cols.get("cartridge_qty", "")
+        # Total infusion qty for the combined field
+        try:
+            total_inf = int(float(inf1_qty or "0")) + int(float(inf2_qty or "0"))
+            parent_values["numeric_mky1xhgp"] = total_inf      # Total Inf. Qty
+        except (ValueError, TypeError):
+            pass
         sensor_qty = cols.get("cgm_sensor_qty", "")
-        if sensor_qty and sensor_qty != "0":
-            parent_values["numeric_mkwz251j"] = sensor_qty   # A4239 units
+        if sensor_qty:
+            parent_values["numeric_mkwz251j"] = sensor_qty      # A4239 units
         monitor_qty = cols.get("cgm_monitor_qty", "")
-        if monitor_qty and monitor_qty != "0":
-            parent_values["numeric_mkwzb2f4"] = monitor_qty  # E2103 units
-            parent_values["numeric_mkwzr5js"] = monitor_qty  # Monitor Qty
+        if monitor_qty:
+            parent_values["numeric_mkwzb2f4"] = monitor_qty     # E2103 units
+            parent_values["numeric_mkwzr5js"] = monitor_qty     # Monitor Qty
 
         # Auth ID
         auth_id = cols.get("auth_id", "")
