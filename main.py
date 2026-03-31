@@ -288,6 +288,40 @@ async def debug_item(item_id: str):
         return {"error": str(e)}
 
 
+@app.get("/debug/board-items/{board_id}", tags=["Debug"])
+async def debug_board_items(board_id: str):
+    """Get recent items on a board with basic column data."""
+    from services.monday_service import run_query
+    try:
+        query = """
+        query ($boardId: ID!) {
+          boards(ids: [$boardId]) {
+            items_page(limit: 10) {
+              items {
+                id name created_at
+                column_values { id type text }
+                subitems { id name }
+              }
+            }
+          }
+        }
+        """
+        result = run_query(query, {"boardId": board_id})
+        items = result.get("data", {}).get("boards", [{}])[0].get("items_page", {}).get("items", [])
+        summary = []
+        for item in items:
+            summary.append({
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "created_at": item.get("created_at"),
+                "subitems_count": len(item.get("subitems", [])),
+                "subitems": [s.get("name") for s in item.get("subitems", [])],
+            })
+        return {"items": summary}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/debug/webhooks/{board_id}", tags=["Debug"])
 async def list_webhooks(board_id: str):
     """List all webhooks on a board."""
