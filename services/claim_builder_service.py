@@ -228,7 +228,15 @@ CLAIMS_BOARD_COLUMN_MAP = {
     "color_mky1qvcf":    "subscription_type",      # Status type
     "color_mkxmmm77":    "insurance_type",          # Status (Commercial/Medicaid/Medicare)
     "color_mkxmywtb":    "primary_status",          # Primary claim status
-    # NOTE: No Gender, CGM Coverage, or Doctor Phone columns on Claims Board
+    "color_mkxmhypt":    "pr_payor",               # Primary Payor (e.g. "Anthem BCBS Commercial")
+    "color_mm1zy5f2":    "gender",                 # Gender (Male/Female)
+    "color_mm1ze7b4":    "cgm_coverage",           # CGM Coverage (Insulin/Hypo)
+    "phone_mm1znnww":    "patient_phone",           # Patient Phone
+    "phone_mm1zy789":    "doctor_phone",            # Doctor Phone
+    "text_mkxwcqfy":     "secondary_id",            # Secondary ID
+    "color_mkxq1a2p":    "secondary_payer",         # Secondary Payer (status)
+    "numeric_mm15t7ed":  "frequency_number",        # Frequency number (e.g. 90)
+    "numeric_mky1xhgp":  "total_infusion_qty",      # Total Infusion Qty
 }
 
 # VERIFIED against live Monday board (2026-03-31)
@@ -237,7 +245,9 @@ CLAIMS_BOARD_SUBITEM_MAP = {
     "color_mm1cdvq8":       "hcpc_code",         # HCPC Code (STATUS type — text returns code)
     "numeric_mm1czbyg":     "order_qty",          # Order Quantity (writable number)
     "formula_mm1cv57q":     "claim_qty",          # Claim Quantity (FORMULA — read only)
-    "formula_mm1c7nen":     "est_pay",            # Est. Pay (FORMULA — read only)
+    "formula_mm1c7nen":     "est_pay_formula",    # Est. Pay formula (FORMULA — read only, may be empty via API)
+    "numeric_mm1zspsy":     "est_pay",            # Est Pay (writable numeric — written by handler)
+    "numeric_mm1za8v5":     "charge_amount",      # Charge Amount (writable numeric — written by handler)
     "color_mm1cjcmg":       "primary_insurance",  # Primary Insurance (status)
     "color_mm1cnfsb":       "order_frequency",    # Order Frequency (status)
 }
@@ -285,6 +295,10 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
         patient_full_name = parts[0].strip()
         payer_from_name = parts[1].strip()
 
+    # Primary Payor column is the authoritative source for payer name
+    # Falls back to item name suffix if the column is empty
+    payer_name = parent_cols.get("pr_payor", "") or payer_from_name
+
     patient_first, patient_last = split_full_name(patient_full_name)
 
     doctor_full_name = parent_cols.get("doctor_name", "")
@@ -315,7 +329,9 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
         order["patient_first_name"]     = patient_first
         order["patient_last_name"]      = patient_last
         order["patient_dob"]            = normalize_date(parent_cols.get("dob", ""))
-        order["patient_gender"]         = normalize_gender(parent_cols.get("gender", "")) if parent_cols.get("gender") else "U"
+        gender_raw = parent_cols.get("gender", "")
+        order["patient_gender"]         = normalize_gender(gender_raw) if gender_raw else "U"
+        order["patient_phone"]          = parent_cols.get("patient_phone", "")
 
         # Patient address
         patient_addr_raw = parent_cols.get("patient_address", "")
@@ -327,20 +343,21 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
             order["patient_state"]       = patient_addr.get("state", "")
             order["patient_postal_code"] = patient_addr.get("postal_code", "")
 
-        # Insurance — payer comes from item name suffix
+        # Insurance — payer from Primary Payor column (or item name suffix fallback)
         order["member_id"] = parent_cols.get("member_id", "")
-        order["primary_insurance_name"] = payer_from_name
-        order["payer_name"] = payer_from_name
+        order["primary_insurance_name"] = payer_name
+        order["payer_name"] = payer_name
         order["diagnosis_code"]     = parent_cols.get("diagnosis_code", "")
         order["cgm_coverage"]       = parent_cols.get("cgm_coverage", "")
         order["subscription_type"]  = parent_cols.get("subscription_type", "")
+        order["secondary_member_id"] = parent_cols.get("secondary_id", "")
 
-        # Doctor
+        # Doctor — doctor_phone now comes from phone column on Claims Board
         order["doctor_name"]        = doctor_full_name
         order["doctor_first_name"]  = doctor_first
         order["doctor_last_name"]   = doctor_last
         order["doctor_npi"]         = parent_cols.get("doctor_npi", "")
-        order["doctor_phone"]       = parent_cols.get("doctor_phone", "")
+        order["doctor_phone"]       = parent_cols.get("doctor_phone", "")  # phone_mm1zy789
 
         # Doctor address
         doctor_addr_raw = parent_cols.get("doctor_address", "")
@@ -365,10 +382,20 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
         # PRE-COMPUTED values — these bypass the resolver functions
         # HCPC Code comes from status column (text contains the code like "E0784")
         order["pre_computed_hcpc"]      = hcpc_code
-        # Units = claim_qty (formula result) or order_qty
-        order["pre_computed_units"]     = sub_cols.get("claim_qty", "") or sub_cols.get("order_qty", "")
-        # Charge = est_pay (formula result) — may be empty if formula not computed
-        order["pre_computed_charge"]    = sub_cols.get("est_pay", "")
+
+        # Units: prefer claim_qty (formula — may be empty via API in production),
+        # fall back to order_qty (writable — always populated by handler)
+        pre_units = sub_cols.get("claim_qty", "") or sub_cols.get("order_qty", "")
+        order["pre_computed_units"]     = pre_units
+
+        # Charge: prefer writable charge_amount column, then est_pay (writable),
+        # then formula est_pay_formula (may be empty via API)
+        pre_charge = (
+            sub_cols.get("charge_amount", "") or
+            sub_cols.get("est_pay", "") or
+            sub_cols.get("est_pay_formula", "")
+        )
+        order["pre_computed_charge"]    = pre_charge
 
         # NOTE: No modifiers column exists on Claims Board subitems.
         # Modifiers will be computed by resolver functions as fallback.
@@ -378,8 +405,9 @@ def claims_board_item_to_normalized_orders(claims_item: dict) -> list[dict]:
             f"Claims Board normalized: {patient_full_name} | "
             f"subitem={subitem.get('name')} | "
             f"hcpc={hcpc_code} | "
-            f"units={sub_cols.get('units', '')} | "
-            f"charge={sub_cols.get('charge_amount', '')}"
+            f"payer={payer_name} | "
+            f"units={pre_units} | "
+            f"charge={pre_charge}"
         )
 
         normalized_orders.append(order)

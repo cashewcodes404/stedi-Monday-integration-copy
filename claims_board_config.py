@@ -232,7 +232,16 @@ CLAIMS_BOARD_PARENT_COLUMN_MAP = {
 
     # NOTE: No dedicated 277 Status column exists on Claims Board.
     # 277 status is tracked via primary_status (color_mkxmywtb).
-    # No Gender column, No CGM Coverage column, No Doctor Phone column.
+
+    # Patient demographics (added 2026-03-31)
+    "color_mm1zy5f2":   "gender",                 # Gender (Male/Female)
+    "color_mm1ze7b4":   "cgm_coverage",           # CGM Coverage (Insulin/Hypo)
+    "phone_mm1znnww":   "patient_phone",           # Patient Phone
+    "phone_mm1zy789":   "doctor_phone",            # Doctor Phone
+    "text_mkxwcqfy":    "secondary_id",            # Secondary ID
+    "color_mkxq1a2p":   "secondary_payer",         # Secondary Payer (status)
+    "numeric_mm15t7ed": "frequency_number",        # Frequency number (e.g. 90)
+    "numeric_mky1xhgp": "total_infusion_qty",      # Total Infusion Qty
 }
 
 # Reverse map: semantic name → column ID for writing
@@ -254,10 +263,12 @@ CLAIMS_BOARD_SUBITEM_COLUMN_MAP = {
     "color_mm1cdvq8":         "hcpc_code",          # HCPC Code (STATUS type — see HCPC_STATUS_INDEX)
     "numeric_mm1czbyg":       "order_qty",           # Order Quantity (writable)
     "formula_mm1cv57q":       "claim_qty",           # Claim Quantity (FORMULA — read only!)
-    "formula_mm1c7nen":       "est_pay",             # Est. Pay (FORMULA — read only!)
+    "formula_mm1c7nen":       "est_pay_formula",     # Est. Pay (FORMULA — read only!)
     "color_mm1cjcmg":         "primary_insurance",   # Primary Insurance (status)
     "color_mm1cnfsb":         "order_frequency",     # Order Frequency (status)
     "dropdown_mm1z7je9":      "modifiers",           # Modifiers (dropdown)
+    "numeric_mm1zspsy":       "est_pay",             # Est Pay (writable numeric — written by handler)
+    "numeric_mm1za8v5":       "charge_amount",       # Charge Amount (writable numeric — written by handler)
     "color_mm1148h5":         "primary_status",      # Primary (status: Outstanding/Paid/Denied/Underpaid)
 
     # ERA fields (populated by 835 handler — UPDATE existing subitems)
