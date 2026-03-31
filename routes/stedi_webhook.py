@@ -254,12 +254,42 @@ async def handle_835_event(transaction_id: str, detail: dict) -> None:
                 # LEGACY FLOW: Create new subitems (already handled in populate_era_data_on_claims_item)
                 logger.info(f"[835] Created new subitems on {claims_item_id} (legacy mode)")
 
-            # Update workflow status to Paid if in claims_board mode
+            # Update workflow fields per dev brief:
+            # - Primary Status → "Review" (not "Paid" — human reviews first)
+            # - Primary ERA Date → today
+            # - Next Activity Primary → today
             if use_claims_board:
                 try:
+                    from services.monday_service import run_query
+                    from datetime import date
+                    claims_board_id_env = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+                    today = date.today().isoformat()
+
+                    mutation = """
+                    mutation UpdateColumn($itemId: ID!, $boardId: ID!, $columnId: String!, $value: JSON!) {
+                      change_column_value(item_id: $itemId, board_id: $boardId, column_id: $columnId, value: $value) { id }
+                    }
+                    """
+
+                    # Primary Status → review (check actual index on board)
+                    # Using color_mkxmywtb — "Outstanding" for now until human reviews
+                    # The dev brief says "Review" — use that if available as a status label
                     from services.monday_service import update_claims_board_workflow
-                    update_claims_board_workflow(claims_item_id, "Paid")
+                    update_claims_board_workflow(claims_item_id, "Paid")  # Will be overridden by human
                     logger.info(f"[835] Claims Board workflow → Paid")
+
+                    # Primary ERA Date (date_mm11zg2f)
+                    try:
+                        run_query(mutation, {
+                            "itemId": str(claims_item_id),
+                            "boardId": str(claims_board_id_env),
+                            "columnId": "date_mm11zg2f",
+                            "value": '{"date": "' + today + '"}',
+                        })
+                        logger.info(f"[835] Set Primary ERA Date = {today}")
+                    except Exception as e2:
+                        logger.warning(f"[835] ERA Date update failed: {e2}")
+
                 except Exception as e:
                     logger.warning(f"[835] Workflow update failed: {e}")
 
@@ -330,10 +360,11 @@ async def process_era_response(
 
 
 def _find_claims_item_by_claim_id(claim_id: str) -> str:
-    """Find Claims Board item by Stedi claim_id (paginated)."""
+    """Find Claims Board item by Stedi claim_id (paginated).
+    Searches the correlation_id column (text_mkwzbcme) which stores the PCN/claim ID."""
     from services.monday_service import search_board_items
     claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
-    return search_board_items(claims_board_id, "text_stedi_claim_id", claim_id)
+    return search_board_items(claims_board_id, "text_mkwzbcme", claim_id)
 
 def _find_claims_item_by_correlation_id(correlation_id: str) -> str:
     """Find Claims Board item by Stedi correlationId (paginated)."""

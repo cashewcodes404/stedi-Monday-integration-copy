@@ -12,11 +12,10 @@ Contains:
 - Reverse write maps for ERA → Monday
 - SUBMISSION_SOURCE routing helper
 
-COLUMN ID CONVENTION:
-  - Columns prefixed with "cb_" are Claims Board placeholders
-  - Columns prefixed with "nob_" are New Order Board placeholders
-  - Replace these with real Monday column IDs after board setup
-  - Real column IDs look like "text_mkwzbcme" or "numeric_mm115q76"
+COLUMN IDS:
+  All column IDs have been verified against the live Monday boards (2026-03-31).
+  Real column IDs look like "text_mkwzbcme" or "numeric_mm115q76".
+  No cb_/nob_ placeholders remain.
 """
 
 import os
