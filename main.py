@@ -267,6 +267,39 @@ async def get_claims_subitem_columns():
     return result
 
 
+@app.get("/debug/webhooks/{board_id}", tags=["Debug"])
+async def list_webhooks(board_id: str):
+    """List all webhooks on a board."""
+    from services.monday_service import run_query
+    query = """
+    query ($boardId: ID!) {
+      boards(ids: [$boardId]) {
+        webhooks { id event board_id config }
+      }
+    }
+    """
+    result = run_query(query, {"boardId": board_id})
+    return result
+
+
+@app.post("/debug/create-webhook", tags=["Debug"])
+async def create_webhook(request: Request):
+    """Create a webhook on a board. Body: {board_id, url, event}"""
+    body = await request.json()
+    from services.monday_service import run_query
+    mutation = """
+    mutation ($boardId: ID!, $url: String!, $event: WebhookEventType!) {
+      create_webhook(board_id: $boardId, url: $url, event: $event) { id board_id }
+    }
+    """
+    result = run_query(mutation, {
+        "boardId": body["board_id"],
+        "url": body["url"],
+        "event": body["event"],
+    })
+    return result
+
+
 @app.post("/submit-test-claim", tags=["Testing"])
 async def submit_test_claim():
     """
