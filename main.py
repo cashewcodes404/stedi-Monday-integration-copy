@@ -267,6 +267,27 @@ async def get_claims_subitem_columns():
     return result
 
 
+@app.get("/debug/item/{item_id}", tags=["Debug"])
+async def debug_item(item_id: str):
+    """Fetch an item with all column values for debugging."""
+    from services.monday_service import run_query
+    try:
+        query = """
+        query ($itemId: ID!) {
+          items(ids: [$itemId]) {
+            id name
+            board { id name }
+            column_values { id title type text value }
+            subitems { id name column_values { id title type text } }
+          }
+        }
+        """
+        result = run_query(query, {"itemId": item_id})
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/debug/webhooks/{board_id}", tags=["Debug"])
 async def list_webhooks(board_id: str):
     """List all webhooks on a board."""
