@@ -888,7 +888,9 @@ async def handle_event(body: dict):
 
     logger.info(f"Status: '{new_label}' | item: {item_id}")
 
-    if new_label == "Submit Claim":
+    if new_label == "Send to STEDI":
+        is_test = False
+    elif new_label == "Submit Claim":
         is_test = False
     elif new_label == "Test Claim Submitted":
         logger.info("Test Claim Submitted triggered")
