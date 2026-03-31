@@ -164,12 +164,40 @@ async def handle_process_order_event(body: dict):
     event = body.get("event", {})
     item_id = str(event.get("pulseId") or event.get("itemId") or "")
     board_id = str(event.get("boardId") or "")
+    column_id = event.get("columnId", "")
 
     if not item_id:
         logger.warning("[ProcessOrder] No item ID in event — ignoring")
         return
 
-    logger.info(f"[ProcessOrder] Triggered for Order Board item {item_id}")
+    # Only process Order Status (color_mkwtxw9r) changes
+    if column_id and column_id != "color_mkwtxw9r":
+        logger.info(f"[ProcessOrder] Ignoring column {column_id} change (not Order Status)")
+        return
+
+    # Only process when status changes to "Process Claim" (index 4)
+    new_value = event.get("value", {})
+    if isinstance(new_value, str):
+        import json as _json2
+        try:
+            new_value = _json2.loads(new_value)
+        except Exception:
+            new_value = {}
+    label_index = new_value.get("label", {}).get("index") if isinstance(new_value.get("label"), dict) else None
+    # Monday may send index as int or the label text directly
+    status_index = new_value.get("index")
+    status_label = new_value.get("label", {}).get("text", "") if isinstance(new_value.get("label"), dict) else str(new_value.get("label", ""))
+
+    is_process_claim = (
+        str(status_index) == "4"
+        or str(label_index) == "4"
+        or status_label == "Process Claim"
+    )
+    if not is_process_claim:
+        logger.info(f"[ProcessOrder] Status changed but not to 'Process Claim' — ignoring (value={new_value})")
+        return
+
+    logger.info(f"[ProcessOrder] Triggered for Order Board item {item_id} (Process Claim)")
 
     try:
         from services.monday_service import run_query
