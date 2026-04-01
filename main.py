@@ -327,15 +327,32 @@ async def list_webhooks(board_id: str):
     """List all webhooks on a board."""
     from services.monday_service import run_query
     try:
-        query = """
-        query ($boardId: ID!) {
-          webhooks(board_id: $boardId) { id event config board_id }
-        }
+        # Monday API 2024-01: webhooks is a top-level query with board_id parameter
+        query = f"""
+        query {{
+          webhooks(board_id: {board_id}) {{ id event config board_id }}
+        }}
         """
-        result = run_query(query, {"boardId": int(board_id)})
+        result = run_query(query)
         return result
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "details": repr(e)}
+
+
+@app.delete("/debug/webhooks/{webhook_id}", tags=["Debug"])
+async def delete_webhook(webhook_id: str):
+    """Delete a webhook by its ID."""
+    from services.monday_service import run_query
+    try:
+        mutation = f"""
+        mutation {{
+          delete_webhook(id: {webhook_id}) {{ id board_id }}
+        }}
+        """
+        result = run_query(mutation)
+        return result
+    except Exception as e:
+        return {"error": str(e), "details": repr(e)}
 
 
 @app.post("/debug/create-webhook", tags=["Debug"])
@@ -354,6 +371,65 @@ async def create_webhook(request: Request):
         "event": body["event"],
     })
     return result
+
+
+@app.post("/debug/cleanup-and-setup-webhooks", tags=["Debug"])
+async def cleanup_and_setup_webhooks():
+    """
+    Delete ALL existing webhooks on both boards, then create one clean webhook
+    on the New Order Board that points to the process-order endpoint.
+
+    This is the nuclear option — wipes everything and starts fresh.
+    """
+    from services.monday_service import run_query
+    import json
+
+    new_order_board_id = os.getenv("MONDAY_NEW_ORDER_BOARD_ID", "18405457690")
+    claims_board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID", "18245429780")
+    base_url = "https://stedi-monday-integration-copy-production.up.railway.app"
+
+    results = {"deleted": [], "created": [], "errors": []}
+
+    # Step 1: Delete all webhooks on BOTH boards
+    for bid in [new_order_board_id, claims_board_id]:
+        try:
+            list_query = f'query {{ webhooks(board_id: {bid}) {{ id event config board_id }} }}'
+            list_result = run_query(list_query)
+            webhooks = list_result.get("data", {}).get("webhooks", [])
+            for wh in webhooks:
+                try:
+                    del_mutation = f'mutation {{ delete_webhook(id: {wh["id"]}) {{ id board_id }} }}'
+                    run_query(del_mutation)
+                    results["deleted"].append({"id": wh["id"], "board_id": bid, "event": wh.get("event")})
+                except Exception as e:
+                    results["errors"].append({"action": "delete", "webhook_id": wh["id"], "error": str(e)})
+        except Exception as e:
+            results["errors"].append({"action": "list", "board_id": bid, "error": str(e)})
+
+    # Step 2: Create the ONE webhook we need on the New Order Board
+    # This fires when ANY status column changes — our code filters for "Process Claim"
+    try:
+        create_mutation = """
+        mutation ($boardId: ID!, $url: String!, $event: WebhookEventType!) {
+          create_webhook(board_id: $boardId, url: $url, event: $event) { id board_id }
+        }
+        """
+        create_result = run_query(create_mutation, {
+            "boardId": new_order_board_id,
+            "url": f"{base_url}/monday/webhook/process-order",
+            "event": "change_status_column_value",
+        })
+        results["created"].append({
+            "board": "New Order Board",
+            "board_id": new_order_board_id,
+            "url": f"{base_url}/monday/webhook/process-order",
+            "event": "change_status_column_value",
+            "result": create_result,
+        })
+    except Exception as e:
+        results["errors"].append({"action": "create", "board": "New Order Board", "error": str(e)})
+
+    return results
 
 
 @app.post("/submit-test-claim", tags=["Testing"])
@@ -484,9 +560,30 @@ async def get_subitem_titles(item_id: str):
 
 @app.get("/test/order-board-columns", tags=["Debug"])
 async def get_order_board_columns():
-    """Get all column IDs and types from the Order Board"""
+    """Get all column IDs and types from the NEW Order Board (18405457690)"""
     from services.monday_service import run_query
-    board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
+    board_id = os.getenv("MONDAY_NEW_ORDER_BOARD_ID")
+    if not board_id:
+        return {"error": "MONDAY_NEW_ORDER_BOARD_ID not set"}
+    query = """
+    query ($boardId: ID!) {
+      boards(ids: [$boardId]) {
+        columns { id title type settings_str }
+      }
+    }
+    """
+    result = run_query(query, {"boardId": board_id})
+    cols = result.get("data", {}).get("boards", [{}])[0].get("columns", [])
+    return [{"id": c["id"], "title": c["title"], "type": c["type"]} for c in cols]
+
+
+@app.get("/test/claims-board-columns", tags=["Debug"])
+async def get_claims_board_columns_list():
+    """Get all column IDs and types from the Claims Board (18245429780)"""
+    from services.monday_service import run_query
+    board_id = os.getenv("MONDAY_CLAIMS_BOARD_ID")
+    if not board_id:
+        return {"error": "MONDAY_CLAIMS_BOARD_ID not set"}
     query = """
     query ($boardId: ID!) {
       boards(ids: [$boardId]) {
@@ -502,10 +599,12 @@ async def get_order_board_columns():
 @app.get("/test/order-status-settings", tags=["Debug"])
 async def get_order_status_settings():
     """
-    Returns the Claim Status column settings including all label indexes.
-    Use this to confirm CLAIM_STATUS_TO_INDEX values in monday_service.py.
+    Returns the Order Status column settings including all label indexes.
+    Uses the NEW Order Board.
     """
     from services.monday_service import get_column_settings
-    board_id = os.getenv("MONDAY_ORDER_BOARD_ID")
+    board_id = os.getenv("MONDAY_NEW_ORDER_BOARD_ID")
+    if not board_id:
+        return {"error": "MONDAY_NEW_ORDER_BOARD_ID not set"}
     result = get_column_settings(board_id, "status")
     return result

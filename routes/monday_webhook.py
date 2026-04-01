@@ -182,7 +182,15 @@ async def handle_process_order_event(body: dict):
 
     # Log the raw event value for debugging
     raw_value = event.get("value", {})
-    logger.info(f"[ProcessOrder] Raw event value: {raw_value}")
+    previous_value = event.get("previousValue", {})
+    logger.info(f"[ProcessOrder] Raw event value: {raw_value}, previousValue: {previous_value}")
+
+    # SAFETY: Ignore events where there was no previous value.
+    # This prevents newly created items with a default status from triggering
+    # the process-claim flow. Only MANUAL status changes should trigger it.
+    if not previous_value or previous_value in ("", "{}", "null", None):
+        logger.info(f"[ProcessOrder] No previousValue — item was just created or default was applied. Ignoring.")
+        return
 
     # Check if status changed to "Process Claim" (index 5 on New Order Board)
     value_str = str(raw_value)
